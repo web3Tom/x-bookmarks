@@ -32,7 +32,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 uv run x-bookmarks
 ```
 
-Bookmarks are written to `~/Documents/notes/obsidianVaults/dev-notes/03_AI/x/` as categorized Markdown files.
+Bookmarks are written to `~/Documents/projects/workspace/knowledge/03_AI/x/x-posts/` as categorized Markdown files (override with `KNOWLEDGE_BASE_DIR` env var).
 
 ## Features
 

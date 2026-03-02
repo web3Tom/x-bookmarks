@@ -8,11 +8,13 @@ dependencies = [
     "httpx>=0.28",
     "python-dotenv>=1.1",
     "anthropic>=0.52",
+    "pyyaml>=6.0",
 ]
 
 [project.scripts]
 x-bookmarks = "src.main:main"
 x-bookmarks-auth = "src.auth_helper:main"
+x-bookmarks-migrate = "src.migrate:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

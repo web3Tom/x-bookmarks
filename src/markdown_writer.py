@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 
+import yaml
+
 from src.models import CategorizedTweet, Category, Tweet
 
-_TWEET_ID_PATTERN = re.compile(r'^tweet_id:\s*"(\S+)"', re.MULTILINE)
+logger = logging.getLogger(__name__)
+
+_TWEET_URL_ID_PATTERN = re.compile(r'^tweet_url:\s*"https://x\.com/\S+/status/(\d+)"', re.MULTILINE)
 
 
-def _read_all_existing_ids(output_dir: Path) -> set[str]:
-    """Scan *.md frontmatter for tweet_id: values (skip index.md)."""
+def read_existing_ids(output_dir: Path) -> set[str]:
+    """Scan *.md frontmatter for tweet IDs extracted from tweet_url values (skip index.md)."""
     all_ids: set[str] = set()
     if not output_dir.exists():
         return all_ids
@@ -17,7 +22,7 @@ def _read_all_existing_ids(output_dir: Path) -> set[str]:
         if md_file.name == "index.md":
             continue
         content = md_file.read_text()
-        all_ids.update(_TWEET_ID_PATTERN.findall(content))
+        all_ids.update(_TWEET_URL_ID_PATTERN.findall(content))
     return all_ids
 
 
@@ -42,20 +47,10 @@ def _escape_yaml_string(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def _build_frontmatter(tweet: Tweet, category: Category, bookmark_type: str) -> str:
+def _build_frontmatter(tweet: Tweet, category: Category, bookmark_type: str, title: str) -> str:
     """YAML block with all metadata fields."""
     username = tweet.author.username if tweet.author else "unknown"
-    author_name = tweet.author.name if tweet.author else "Unknown"
     date_str = tweet.created_at.strftime("%Y-%m-%d")
-    metrics = tweet.public_metrics
-
-    if bookmark_type == "article" and tweet.article_title:
-        title = tweet.article_title
-    else:
-        title = tweet.display_text
-
-    if len(title) > 80:
-        title = title[:80] + "..."
 
     escaped_title = _escape_yaml_string(title)
     tweet_url = f"https://x.com/{username}/status/{tweet.id}"
@@ -64,19 +59,12 @@ def _build_frontmatter(tweet: Tweet, category: Category, bookmark_type: str) -> 
         "---",
         f'title: "{escaped_title}"',
         f'author: "@{username}"',
-        f"author_name: {author_name}",
-        f"category: {category.display_name}",
+        f'category: "{_escape_yaml_string(category.display_name)}"',
+        f'subCategory: "{_escape_yaml_string(category.sub_category)}"',
         f"date: {date_str}",
         "read: false",
-        f"type: {bookmark_type}",
-        f'tweet_id: "{tweet.id}"',
+        f'type: "{bookmark_type}"',
         f'tweet_url: "{tweet_url}"',
-        f"likes: {metrics.get('like_count', 0)}",
-        f"retweets: {metrics.get('retweet_count', 0)}",
-        f"replies: {metrics.get('reply_count', 0)}",
-        f"bookmarks: {metrics.get('bookmark_count', 0)}",
-        f"has_media: {'true' if tweet.media else 'false'}",
-        f"has_links: {'true' if tweet.external_links else 'false'}",
     ]
 
     if bookmark_type == "article" and tweet.article_url:
@@ -86,38 +74,73 @@ def _build_frontmatter(tweet: Tweet, category: Category, bookmark_type: str) -> 
     return "\n".join(lines) + "\n"
 
 
-def _format_post_body(tweet: Tweet) -> str:
-    """Blockquoted text + original link + external links + media."""
+def _validate_frontmatter(frontmatter: str) -> str:
+    """Validate YAML frontmatter; attempt repair if broken."""
+    lines = frontmatter.strip().split("\n")
+    if len(lines) < 3 or lines[0] != "---" or lines[-1] != "---":
+        return frontmatter
+
+    yaml_body = "\n".join(lines[1:-1])
+    try:
+        yaml.safe_load(yaml_body)
+        return frontmatter
+    except yaml.YAMLError as exc:
+        logger.warning("Frontmatter YAML validation failed: %s — attempting repair", exc)
+        repaired_lines = []
+        for line in lines[1:-1]:
+            if line.startswith("title: "):
+                safe_title = _escape_yaml_string(
+                    line[len('title: "'):-1] if line.endswith('"') else line[len("title: "):]
+                )
+                repaired_lines.append(f'title: "{safe_title}"')
+            else:
+                repaired_lines.append(line)
+        repaired = "---\n" + "\n".join(repaired_lines) + "\n---\n"
+        try:
+            yaml.safe_load("\n".join(repaired_lines))
+            return repaired
+        except yaml.YAMLError:
+            logger.warning("Frontmatter repair failed; returning original")
+            return frontmatter
+
+
+def _format_post_body(tweet: Tweet, title: str) -> str:
+    """## {title} (blockquoted text + media) then ## References (links)."""
     username = tweet.author.username if tweet.author else "unknown"
     text = tweet.display_text
-    lines: list[str] = []
-
-    for line in text.split("\n"):
-        lines.append(f"> {line}")
-
     tweet_url = f"https://x.com/{username}/status/{tweet.id}"
-    lines.append("")
-    lines.append(f"\U0001f517 [Original tweet]({tweet_url})")
 
-    if tweet.external_links:
-        lines.append("")
-        for link in tweet.external_links:
-            label = link.title or link.display_url
-            lines.append(f"\U0001f310 [{label}]({link.expanded_url})")
+    notes_lines: list[str] = [f"## {title}", ""]
+    for line in text.split("\n"):
+        notes_lines.append(f"> {line}")
 
     if tweet.media:
-        lines.append("")
+        notes_lines.append("")
         for m in tweet.media:
             url = m.url or m.preview_image_url or ""
             if url:
-                lines.append(f"\U0001f4f7 [{m.type}]({url})")
+                notes_lines.append(f"\U0001f4f7 [{m.type}]({url})")
 
-    return "\n".join(lines) + "\n"
+    ref_lines: list[str] = ["## References", ""]
+    ref_lines.append(f"- \U0001f517 [Original tweet]({tweet_url})")
+
+    if tweet.external_links:
+        for link in tweet.external_links:
+            label = link.title or link.display_url
+            ref_lines.append(f"- \U0001f310 [{label}]({link.expanded_url})")
+
+    return "\n".join(notes_lines) + "\n\n" + "\n".join(ref_lines) + "\n"
 
 
-def _format_article_body(tweet: Tweet) -> str:
-    """Just tweet.article_content."""
-    return tweet.article_content or ""
+def _format_article_body(tweet: Tweet, title: str) -> str:
+    """## {title} (article content) then ## References (tweet link)."""
+    username = tweet.author.username if tweet.author else "unknown"
+    tweet_url = f"https://x.com/{username}/status/{tweet.id}"
+    content = tweet.article_content or ""
+
+    notes = f"## {title}\n\n{content}"
+    refs = f"## References\n\n- \U0001f517 [Original tweet]({tweet_url})"
+    return notes + "\n\n" + refs + "\n"
 
 
 def _write_index_file(output_dir: Path) -> None:
@@ -130,13 +153,13 @@ title: X Bookmarks
 TABLE
   author,
   category,
+  subCategory,
   type,
   date,
-  read,
-  likes
-FROM "03_AI/x/x-test"
+  read
+FROM "03_AI/x"
 WHERE type
-SORT date DESC
+SORT category ASC, subCategory ASC, date DESC
 ```
 """
     (output_dir / "index.md").write_text(content)
@@ -149,12 +172,17 @@ def write_bookmarks(
     """Main entry point — one file per bookmark, flat directory."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    existing_ids = _read_all_existing_ids(output_dir)
+    existing_ids = read_existing_ids(output_dir)
     existing_names: set[str] = {
         f.name for f in output_dir.glob("*.md") if f.name != "index.md"
     }
 
-    stats = {"files_written": 0, "bookmarks_written": 0, "duplicates_skipped": 0}
+    stats: dict[str, int | list[str]] = {
+        "files_written": 0,
+        "bookmarks_written": 0,
+        "duplicates_skipped": 0,
+        "filenames": [],
+    }
 
     for ct in categorized:
         tweet = ct.tweet
@@ -168,14 +196,16 @@ def write_bookmarks(
         filename = _build_filename(tweet, existing_names)
         existing_names.add(filename)
 
-        frontmatter = _build_frontmatter(tweet, ct.category, bookmark_type)
-        body = _format_article_body(tweet) if is_article else _format_post_body(tweet)
+        frontmatter = _build_frontmatter(tweet, ct.category, bookmark_type, ct.title)
+        frontmatter = _validate_frontmatter(frontmatter)
+        body = _format_article_body(tweet, ct.title) if is_article else _format_post_body(tweet, ct.title)
 
         file_path = output_dir / filename
         file_path.write_text(frontmatter + "\n" + body)
 
         stats["files_written"] += 1
         stats["bookmarks_written"] += 1
+        stats["filenames"].append(filename)
         existing_ids.add(tweet.id)
 
     _write_index_file(output_dir)

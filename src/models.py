@@ -75,12 +75,14 @@ class Tweet:
 class Category:
     slug: str
     display_name: str
+    sub_category: str
 
 
 @dataclass(frozen=True)
 class CategorizedTweet:
     tweet: Tweet
     category: Category
+    title: str
 
 
 @dataclass(frozen=True)

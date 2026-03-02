@@ -53,8 +53,13 @@ class TestConfig:
 
     def test_output_dir_is_correct(self, minimal_env):
         config = load_config(env_path=minimal_env)
-        expected = Path.home() / "Documents/notes/obsidianVaults/dev-notes/03_AI/x"
+        expected = Path.home() / "Documents/projects/workspace/knowledge/03_AI/x/x-posts"
         assert config.output_dir == expected
+
+    def test_output_dir_from_env_override(self, minimal_env, monkeypatch):
+        monkeypatch.setenv("KNOWLEDGE_BASE_DIR", "/tmp/custom-kb")
+        config = load_config(env_path=minimal_env)
+        assert config.output_dir == Path("/tmp/custom-kb/03_AI/x/x-posts")
 
     def test_missing_client_id_raises(self, tmp_path, monkeypatch):
         env_file = tmp_path / ".env"

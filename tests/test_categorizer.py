@@ -7,7 +7,10 @@ from src.categorizer import (
     build_prompt_payload,
     parse_categorization_response,
     categorize_tweets,
+    _slugify,
+    _sanitize_title,
     SYSTEM_PROMPT,
+    TAXONOMY,
 )
 from src.models import Tweet, Category, CategorizedTweet, User
 
@@ -94,31 +97,123 @@ class TestBuildPromptPayload:
         assert "article_excerpt" not in parsed[0]
 
 
+class TestSlugify:
+    def test_simple_name(self):
+        assert _slugify("AI Coding") == "ai-coding"
+
+    def test_ampersand(self):
+        assert _slugify("AI Product & Strategy") == "ai-product-strategy"
+
+    def test_multiple_spaces(self):
+        assert _slugify("ML  Research") == "ml-research"
+
+    def test_general(self):
+        assert _slugify("General") == "general"
+
+
+class TestSystemPrompt:
+    def test_contains_all_taxonomy_categories(self):
+        for category in TAXONOMY:
+            assert category in SYSTEM_PROMPT
+
+    def test_contains_all_subcategories(self):
+        for subs in TAXONOMY.values():
+            for sub in subs:
+                assert sub in SYSTEM_PROMPT
+
+    def test_contains_taxonomy_instruction(self):
+        assert "MUST pick from the categories" in SYSTEM_PROMPT
+        assert "whenever possible" in SYSTEM_PROMPT
+
+    def test_allows_new_categories_when_necessary(self):
+        assert "MAY create a new category" in SYSTEM_PROMPT
+        assert "Title Case" in SYSTEM_PROMPT
+        assert "Do NOT duplicate" in SYSTEM_PROMPT
+
+    def test_contains_general_fallback_instruction(self):
+        assert '"General"' in SYSTEM_PROMPT
+        assert '"Uncategorized"' in SYSTEM_PROMPT
+
+    def test_contains_title_generation_instruction(self):
+        assert "title" in SYSTEM_PROMPT.lower()
+        assert "max 80 chars" in SYSTEM_PROMPT
+        assert "YAML-safe" in SYSTEM_PROMPT
+
+
 class TestParseCategorizationResponse:
     def test_parse_clean_json(self):
         response = json.dumps([
-            {"tweet_id": "1", "slug": "python", "display_name": "Python"},
-            {"tweet_id": "2", "slug": "ai-ml", "display_name": "AI & ML"},
+            {"tweet_id": "1", "category": "AI Coding", "sub_category": "Coding Workflows", "title": "Python Coding Tips"},
+            {"tweet_id": "2", "category": "ML Research", "sub_category": "Applied ML", "title": "New LLM Benchmarks"},
         ])
         result = parse_categorization_response(response)
         assert len(result) == 2
-        assert result["1"] == Category(slug="python", display_name="Python")
-        assert result["2"] == Category(slug="ai-ml", display_name="AI & ML")
+        cat1, title1 = result["1"]
+        assert cat1 == Category(slug="ai-coding", display_name="AI Coding", sub_category="Coding Workflows")
+        assert title1 == "Python Coding Tips"
+        cat2, title2 = result["2"]
+        assert cat2 == Category(slug="ml-research", display_name="ML Research", sub_category="Applied ML")
+        assert title2 == "New LLM Benchmarks"
 
     def test_parse_markdown_fenced_json(self):
-        response = '```json\n[{"tweet_id": "1", "slug": "dev", "display_name": "Development"}]\n```'
+        response = '```json\n[{"tweet_id": "1", "category": "Agent Architectures", "sub_category": "Applied Agents", "title": "Multi-Agent Orchestration"}]\n```'
         result = parse_categorization_response(response)
         assert len(result) == 1
-        assert result["1"].slug == "dev"
+        cat, title = result["1"]
+        assert cat.slug == "agent-architectures"
+        assert cat.sub_category == "Applied Agents"
+        assert title == "Multi-Agent Orchestration"
 
     def test_parse_with_backtick_only(self):
-        response = '```\n[{"tweet_id": "1", "slug": "dev", "display_name": "Dev"}]\n```'
+        response = '```\n[{"tweet_id": "1", "category": "Model Systems", "sub_category": "Inference & Serving", "title": "vLLM Serving Guide"}]\n```'
         result = parse_categorization_response(response)
-        assert result["1"].slug == "dev"
+        cat, title = result["1"]
+        assert cat.slug == "model-systems"
+        assert cat.sub_category == "Inference & Serving"
+        assert title == "vLLM Serving Guide"
 
     def test_empty_response_returns_empty(self):
         result = parse_categorization_response("[]")
         assert result == {}
+
+    def test_slug_generated_from_category(self):
+        response = json.dumps([
+            {"tweet_id": "1", "category": "AI Product & Strategy", "sub_category": "Monetization & GTM", "title": "AI Startup Pricing"},
+        ])
+        result = parse_categorization_response(response)
+        cat, _ = result["1"]
+        assert cat.slug == "ai-product-strategy"
+
+    def test_missing_title_returns_empty_string(self):
+        response = json.dumps([
+            {"tweet_id": "1", "category": "AI Coding", "sub_category": "Coding Workflows"},
+        ])
+        result = parse_categorization_response(response)
+        _, title = result["1"]
+        assert title == ""
+
+
+class TestSanitizeTitle:
+    def test_removes_newlines(self):
+        assert _sanitize_title("Line 1\nLine 2\rLine 3") == "Line 1 Line 2 Line 3"
+
+    def test_replaces_colons(self):
+        assert _sanitize_title("Key: Value") == "Key - Value"
+
+    def test_replaces_quotes(self):
+        assert _sanitize_title('He said "hello"') == "He said 'hello'"
+
+    def test_replaces_brackets(self):
+        assert _sanitize_title("Use [this] library") == "Use (this) library"
+
+    def test_truncates_long_text(self):
+        long = "A" * 200
+        result = _sanitize_title(long)
+        assert len(result) == 83  # 80 + "..."
+        assert result.endswith("...")
+
+    def test_short_text_unchanged(self):
+        assert _sanitize_title("Simple title") == "Simple title"
 
 
 class TestCategorizeTweets:
@@ -129,8 +224,8 @@ class TestCategorizeTweets:
         mock_response = MagicMock()
         mock_response.content = [MagicMock()]
         mock_response.content[0].text = json.dumps([
-            {"tweet_id": "1", "slug": "python", "display_name": "Python"},
-            {"tweet_id": "2", "slug": "ai-ml", "display_name": "AI & ML"},
+            {"tweet_id": "1", "category": "AI Coding", "sub_category": "Coding Workflows", "title": "Python Tips and Tricks"},
+            {"tweet_id": "2", "category": "ML Research", "sub_category": "Applied ML", "title": "Latest LLM Advances"},
         ])
         mock_response.usage.input_tokens = 500
         mock_response.usage.output_tokens = 100
@@ -140,8 +235,11 @@ class TestCategorizeTweets:
         result, usage = categorize_tweets(tweets, api_key="sk-test")
 
         assert len(result) == 2
-        assert result[0].category.slug == "python"
-        assert result[1].category.slug == "ai-ml"
+        assert result[0].category.slug == "ai-coding"
+        assert result[0].category.sub_category == "Coding Workflows"
+        assert result[0].title == "Python Tips and Tricks"
+        assert result[1].category.slug == "ml-research"
+        assert result[1].title == "Latest LLM Advances"
         assert usage["input_tokens"] == 500
 
     @patch("src.categorizer.anthropic")
@@ -151,7 +249,7 @@ class TestCategorizeTweets:
         mock_response = MagicMock()
         mock_response.content = [MagicMock()]
         mock_response.content[0].text = json.dumps([
-            {"tweet_id": "1", "slug": "python", "display_name": "Python"},
+            {"tweet_id": "1", "category": "AI Coding", "sub_category": "Coding Workflows", "title": "Python Insights"},
         ])
         mock_response.usage.input_tokens = 100
         mock_response.usage.output_tokens = 50
@@ -161,9 +259,30 @@ class TestCategorizeTweets:
         result, _ = categorize_tweets(tweets, api_key="sk-test")
 
         assert len(result) == 2
-        categorized_ids = {ct.tweet.id: ct.category.slug for ct in result}
-        assert categorized_ids["1"] == "python"
-        assert categorized_ids["2"] == "general"
+        categorized_map = {ct.tweet.id: ct for ct in result}
+        assert categorized_map["1"].category.slug == "ai-coding"
+        assert categorized_map["1"].title == "Python Insights"
+        assert categorized_map["2"].category.slug == "general"
+        assert categorized_map["2"].category.sub_category == "Uncategorized"
+        assert categorized_map["2"].title == "Uncategorized"  # fallback from _sanitize_title
+
+    @patch("src.categorizer.anthropic")
+    def test_fallback_title_when_claude_returns_empty(self, mock_anthropic_module):
+        mock_client = MagicMock()
+        mock_anthropic_module.Anthropic.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock()]
+        mock_response.content[0].text = json.dumps([
+            {"tweet_id": "1", "category": "AI Coding", "sub_category": "Coding Workflows", "title": ""},
+        ])
+        mock_response.usage.input_tokens = 50
+        mock_response.usage.output_tokens = 25
+        mock_client.messages.create.return_value = mock_response
+
+        tweets = (_make_tweet("1", "Python tips"),)
+        result, _ = categorize_tweets(tweets, api_key="sk-test")
+
+        assert result[0].title == "Python tips"  # sanitized display_text fallback
 
     @patch("src.categorizer.anthropic")
     def test_system_prompt_used(self, mock_anthropic_module):

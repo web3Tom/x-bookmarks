@@ -39,5 +39,11 @@ def load_config(env_path: Path | None = None) -> Config:
         refresh_token=os.environ["REFRESH_TOKEN"],
         user_id=os.environ["USER_ID"],
         anthropic_api_key=os.environ["ANTHROPIC_API_KEY"],
-        output_dir=Path.home() / "Documents/notes/obsidianVaults/dev-notes/03_AI/x/x-test",
+        output_dir=Path(
+            os.environ.get(
+                "KNOWLEDGE_BASE_DIR",
+                str(Path.home() / "Documents/projects/workspace/knowledge"),
+            )
+        )
+        / "03_AI/x/x-posts",
     )

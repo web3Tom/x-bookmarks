@@ -201,13 +201,19 @@ class TestTweet:
 
 class TestCategory:
     def test_create_category(self):
-        cat = Category(slug="machine-learning", display_name="Machine Learning")
+        cat = Category(slug="machine-learning", display_name="Machine Learning", sub_category="Applied ML")
         assert cat.slug == "machine-learning"
+        assert cat.sub_category == "Applied ML"
 
     def test_category_is_frozen(self):
-        cat = Category(slug="s", display_name="d")
+        cat = Category(slug="s", display_name="d", sub_category="sc")
         with pytest.raises(AttributeError):
             cat.slug = "new"
+
+    def test_sub_category_is_frozen(self):
+        cat = Category(slug="s", display_name="d", sub_category="sc")
+        with pytest.raises(AttributeError):
+            cat.sub_category = "new"
 
 
 class TestCategorizedTweet:
@@ -218,9 +224,22 @@ class TestCategorizedTweet:
             public_metrics={}, media=(), external_links=(),
             note_tweet_text=None, article_url=None,
         )
-        cat = Category(slug="python", display_name="Python")
-        ct = CategorizedTweet(tweet=tweet, category=cat)
+        cat = Category(slug="python", display_name="Python", sub_category="General")
+        ct = CategorizedTweet(tweet=tweet, category=cat, title="Python Best Practices")
         assert ct.category.slug == "python"
+        assert ct.title == "Python Best Practices"
+
+    def test_title_is_frozen(self):
+        tweet = Tweet(
+            id="1", text="t", author_id="a",
+            created_at=datetime.now(), author=None,
+            public_metrics={}, media=(), external_links=(),
+            note_tweet_text=None, article_url=None,
+        )
+        cat = Category(slug="s", display_name="d", sub_category="sc")
+        ct = CategorizedTweet(tweet=tweet, category=cat, title="Original")
+        with pytest.raises(AttributeError):
+            ct.title = "Changed"
 
 
 class TestBookmarkPage:

@@ -1,0 +1,8 @@
+Resolved 30 packages in 222ms
+   Building x-bookmarks @ file:///home/tom/Documents/projects/workspace/x-bookmarks
+      Built x-bookmarks @ file:///home/tom/Documents/projects/workspace/x-bookmarks
+Prepared 2 packages in 177ms
+Uninstalled 1 package in 0.24ms
+Installed 2 packages in 0.57ms
+ + pyyaml==6.0.3
+ ~ x-bookmarks==0.1.0 (from file:///home/tom/Documents/projects/workspace/x-bookmarks)

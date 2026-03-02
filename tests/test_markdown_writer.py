@@ -2,12 +2,16 @@ import pytest
 from datetime import datetime
 from pathlib import Path
 
+import yaml
+
 from src.markdown_writer import (
     _build_filename,
     _build_frontmatter,
+    _escape_yaml_string,
+    _validate_frontmatter,
     _format_post_body,
     _format_article_body,
-    _read_all_existing_ids,
+    read_existing_ids,
     _write_index_file,
     write_bookmarks,
 )
@@ -61,6 +65,14 @@ def _make_tweet(
     )
 
 
+def _make_category(
+    slug: str = "ai-agents",
+    display_name: str = "AI Agents",
+    sub_category: str = "Applied Agents",
+) -> Category:
+    return Category(slug=slug, display_name=display_name, sub_category=sub_category)
+
+
 class TestBuildFilename:
     def test_basic_naming(self):
         tweet = _make_tweet(username="alice", created_at=datetime(2026, 2, 24))
@@ -91,114 +103,173 @@ class TestBuildFilename:
         assert result == "2026-02-24-alice-3.md"
 
 
+class TestEscapeYamlString:
+    def test_plain_string(self):
+        assert _escape_yaml_string("Hello world") == "Hello world"
+
+    def test_escapes_backslashes(self):
+        assert _escape_yaml_string("path\\to\\file") == "path\\\\to\\\\file"
+
+    def test_escapes_double_quotes(self):
+        assert _escape_yaml_string('He said "hello"') == 'He said \\"hello\\"'
+
+    def test_combined_escaping(self):
+        assert _escape_yaml_string('a\\b "c"') == 'a\\\\b \\"c\\"'
+
+
 class TestBuildFrontmatter:
     def test_post_fields(self):
         tweet = _make_tweet()
-        cat = Category(slug="ai-agents", display_name="AI Agents")
-        fm = _build_frontmatter(tweet, cat, "post")
+        cat = _make_category()
+        fm = _build_frontmatter(tweet, cat, "post", "Hello world")
         assert fm.startswith("---\n")
         assert fm.endswith("---\n")
+        assert 'title: "Hello world"' in fm
         assert 'author: "@alice"' in fm
-        assert "author_name: Alice" in fm
-        assert "category: AI Agents" in fm
+        assert 'category: "AI Agents"' in fm
+        assert 'subCategory: "Applied Agents"' in fm
         assert "date: 2026-02-24" in fm
         assert "read: false" in fm
-        assert "type: post" in fm
-        assert 'tweet_id: "1"' in fm
+        assert 'type: "post"' in fm
         assert 'tweet_url: "https://x.com/alice/status/1"' in fm
-        assert "likes: 196" in fm
-        assert "retweets: 12" in fm
-        assert "replies: 7" in fm
-        assert "bookmarks: 319" in fm
-        assert "has_media: false" in fm
-        assert "has_links: false" in fm
+        assert "author_name" not in fm
+        assert "tweet_id:" not in fm
+        assert "likes:" not in fm
+        assert "retweets:" not in fm
+        assert "replies:" not in fm
+        assert "bookmarks:" not in fm
+        assert "has_media:" not in fm
+        assert "has_links:" not in fm
+
+    def test_frontmatter_is_valid_yaml(self):
+        tweet = _make_tweet()
+        cat = _make_category()
+        fm = _build_frontmatter(tweet, cat, "post", "Hello world")
+        lines = fm.strip().split("\n")
+        yaml_body = "\n".join(lines[1:-1])
+        parsed = yaml.safe_load(yaml_body)
+        assert parsed["title"] == "Hello world"
+        assert parsed["category"] == "AI Agents"
+        assert parsed["subCategory"] == "Applied Agents"
+        assert parsed["type"] == "post"
+
+    def test_subcategory_in_frontmatter(self):
+        tweet = _make_tweet()
+        cat = _make_category(sub_category="Coding Workflows")
+        fm = _build_frontmatter(tweet, cat, "post", "Test Title")
+        assert 'subCategory: "Coding Workflows"' in fm
+
+    def test_subcategory_after_category(self):
+        tweet = _make_tweet()
+        cat = _make_category()
+        fm = _build_frontmatter(tweet, cat, "post", "Test Title")
+        lines = fm.split("\n")
+        cat_idx = next(i for i, l in enumerate(lines) if l.startswith("category:"))
+        sub_idx = next(i for i, l in enumerate(lines) if l.startswith("subCategory:"))
+        assert sub_idx == cat_idx + 1
 
     def test_article_fields(self):
         tweet = _make_tweet(
             article_url="https://x.com/alice/articles/1",
-            article_title="My Great Article",
             article_content="Some content",
         )
-        cat = Category(slug="tech", display_name="Tech")
-        fm = _build_frontmatter(tweet, cat, "article")
-        assert "type: article" in fm
+        cat = _make_category(slug="tech", display_name="Tech", sub_category="General")
+        fm = _build_frontmatter(tweet, cat, "article", "My Great Article")
+        assert 'type: "article"' in fm
         assert 'article_url: "https://x.com/alice/articles/1"' in fm
         assert 'title: "My Great Article"' in fm
 
-    def test_untitled_fallback(self):
+    def test_explicit_title_used(self):
         tweet = _make_tweet()
-        cat = Category(slug="tech", display_name="Tech")
-        fm = _build_frontmatter(tweet, cat, "post")
-        assert 'title: "Hello world"' in fm
+        cat = _make_category()
+        fm = _build_frontmatter(tweet, cat, "post", "Claude Generated Title")
+        assert 'title: "Claude Generated Title"' in fm
 
-    def test_title_truncation(self):
-        long_text = "A" * 200
-        tweet = _make_tweet(text=long_text)
-        cat = Category(slug="tech", display_name="Tech")
-        fm = _build_frontmatter(tweet, cat, "post")
-        # Title should be truncated to 80 chars + "..."
-        lines = fm.split("\n")
-        title_line = [l for l in lines if l.startswith("title:")][0]
-        # Extract value between quotes
-        title_val = title_line.split('"')[1]
-        assert len(title_val) == 83  # 80 + "..."
-
-    def test_quote_escaping(self):
-        tweet = _make_tweet(text='He said "hello" to me')
-        cat = Category(slug="tech", display_name="Tech")
-        fm = _build_frontmatter(tweet, cat, "post")
+    def test_quote_escaping_in_title(self):
+        tweet = _make_tweet()
+        cat = _make_category()
+        fm = _build_frontmatter(tweet, cat, "post", 'He said "hello" to me')
         assert 'title: "He said \\"hello\\" to me"' in fm
 
-    def test_metrics(self):
-        tweet = _make_tweet(like_count=0, retweet_count=0, reply_count=0, bookmark_count=0)
-        cat = Category(slug="tech", display_name="Tech")
-        fm = _build_frontmatter(tweet, cat, "post")
-        assert "likes: 0" in fm
-        assert "retweets: 0" in fm
+    def test_ampersand_in_subcategory_valid_yaml(self):
+        tweet = _make_tweet()
+        cat = _make_category(sub_category="Inference & Serving")
+        fm = _build_frontmatter(tweet, cat, "post", "Test Title")
+        lines = fm.strip().split("\n")
+        yaml_body = "\n".join(lines[1:-1])
+        parsed = yaml.safe_load(yaml_body)
+        assert parsed["subCategory"] == "Inference & Serving"
 
-    def test_has_media_true(self):
+    def test_removed_fields_not_present(self):
         media = Media(
             media_key="3_100", type="photo",
             url="https://pbs.twimg.com/media/photo.jpg",
             preview_image_url=None, variants=(),
         )
-        tweet = _make_tweet(media=(media,))
-        cat = Category(slug="tech", display_name="Tech")
-        fm = _build_frontmatter(tweet, cat, "post")
-        assert "has_media: true" in fm
-
-    def test_has_links_true(self):
         link = ExternalLink(
             url="https://t.co/abc",
             expanded_url="https://example.com",
             display_url="example.com",
             title="Example",
         )
-        tweet = _make_tweet(external_links=(link,))
-        cat = Category(slug="tech", display_name="Tech")
-        fm = _build_frontmatter(tweet, cat, "post")
-        assert "has_links: true" in fm
+        tweet = _make_tweet(media=(media,), external_links=(link,))
+        cat = _make_category()
+        fm = _build_frontmatter(tweet, cat, "post", "Test Title")
+        assert "has_media:" not in fm
+        assert "has_links:" not in fm
+        assert "likes:" not in fm
+        assert "author_name:" not in fm
+
+
+class TestValidateFrontmatter:
+    def test_valid_frontmatter_passes_through(self):
+        fm = '---\ntitle: "Hello"\nauthor: "@alice"\n---\n'
+        assert _validate_frontmatter(fm) == fm
+
+    def test_broken_yaml_attempts_repair(self):
+        fm = '---\ntitle: "Bad: "yaml": here"\nauthor: "@alice"\n---\n'
+        result = _validate_frontmatter(fm)
+        assert result.startswith("---\n")
+        assert result.endswith("---\n")
+
+    def test_non_frontmatter_passes_through(self):
+        text = "not frontmatter at all"
+        assert _validate_frontmatter(text) == text
+
+    def test_valid_complex_frontmatter(self):
+        fm = (
+            '---\n'
+            'title: "Inference & Serving Guide"\n'
+            'author: "@alice"\n'
+            'category: "Model Systems"\n'
+            'subCategory: "Inference & Serving"\n'
+            'type: "post"\n'
+            '---\n'
+        )
+        assert _validate_frontmatter(fm) == fm
 
 
 class TestFormatPostBody:
-    def test_blockquote(self):
+    def test_title_heading(self):
         tweet = _make_tweet(text="Hello world")
-        body = _format_post_body(tweet)
+        body = _format_post_body(tweet, "Python Tips")
+        assert "## Python Tips" in body
         assert "> Hello world" in body
+
+    def test_references_section(self):
+        tweet = _make_tweet(id="999", username="bob")
+        body = _format_post_body(tweet, "Test Title")
+        assert "## References" in body
+        assert "- \U0001f517 [Original tweet](https://x.com/bob/status/999)" in body
 
     def test_multiline_blockquote(self):
         tweet = _make_tweet(text="Line 1\nLine 2\nLine 3")
-        body = _format_post_body(tweet)
+        body = _format_post_body(tweet, "Multi Line")
         assert "> Line 1" in body
         assert "> Line 2" in body
         assert "> Line 3" in body
 
-    def test_tweet_link(self):
-        tweet = _make_tweet(id="999", username="bob")
-        body = _format_post_body(tweet)
-        assert "\U0001f517 [Original tweet](https://x.com/bob/status/999)" in body
-
-    def test_external_links(self):
+    def test_external_links_in_references(self):
         link = ExternalLink(
             url="https://t.co/abc",
             expanded_url="https://example.com/article",
@@ -206,8 +277,12 @@ class TestFormatPostBody:
             title="Great Article",
         )
         tweet = _make_tweet(external_links=(link,))
-        body = _format_post_body(tweet)
-        assert "\U0001f310 [Great Article](https://example.com/article)" in body
+        body = _format_post_body(tweet, "Link Post")
+        assert "- \U0001f310 [Great Article](https://example.com/article)" in body
+        # External links should be in References section
+        refs_idx = body.index("## References")
+        link_idx = body.index("Great Article")
+        assert link_idx > refs_idx
 
     def test_external_link_uses_display_url_when_no_title(self):
         link = ExternalLink(
@@ -217,121 +292,140 @@ class TestFormatPostBody:
             title=None,
         )
         tweet = _make_tweet(external_links=(link,))
-        body = _format_post_body(tweet)
-        assert "\U0001f310 [example.com/page](https://example.com/page)" in body
+        body = _format_post_body(tweet, "Display URL")
+        assert "- \U0001f310 [example.com/page](https://example.com/page)" in body
 
-    def test_media(self):
+    def test_media_in_title_section(self):
         media = Media(
             media_key="3_100", type="photo",
             url="https://pbs.twimg.com/media/photo.jpg",
             preview_image_url=None, variants=(),
         )
         tweet = _make_tweet(media=(media,))
-        body = _format_post_body(tweet)
+        body = _format_post_body(tweet, "Photo Post")
         assert "\U0001f4f7 [photo](https://pbs.twimg.com/media/photo.jpg)" in body
+        # Media should be in title section, before References
+        title_idx = body.index("## Photo Post")
+        media_idx = body.index("[photo]")
+        refs_idx = body.index("## References")
+        assert title_idx < media_idx < refs_idx
 
     def test_note_tweet_uses_display_text(self):
         tweet = _make_tweet(text="Short", note_tweet_text="Full long-form text here")
-        body = _format_post_body(tweet)
+        body = _format_post_body(tweet, "Long Form")
         assert "> Full long-form text here" in body
         assert "Short" not in body
 
+    def test_title_before_references(self):
+        tweet = _make_tweet()
+        body = _format_post_body(tweet, "My Title")
+        title_idx = body.index("## My Title")
+        refs_idx = body.index("## References")
+        assert title_idx < refs_idx
+
 
 class TestFormatArticleBody:
-    def test_content_passthrough(self):
+    def test_title_heading_with_content(self):
         tweet = _make_tweet(article_content="# Great Article\n\nSome body text.")
-        body = _format_article_body(tweet)
-        assert body == "# Great Article\n\nSome body text."
+        body = _format_article_body(tweet, "Great Article")
+        assert "## Great Article" in body
+        assert "# Great Article\n\nSome body text." in body
+
+    def test_references_section_with_tweet_link(self):
+        tweet = _make_tweet(id="456", username="bob", article_content="Body text.")
+        body = _format_article_body(tweet, "Body Text Summary")
+        assert "## References" in body
+        assert "- \U0001f517 [Original tweet](https://x.com/bob/status/456)" in body
 
     def test_none_handling(self):
         tweet = _make_tweet(article_content=None)
-        body = _format_article_body(tweet)
-        assert body == ""
+        body = _format_article_body(tweet, "Empty Article")
+        assert "## Empty Article" in body
+        assert "## References" in body
 
 
 class TestReadAllExistingIds:
     def test_empty_dir(self, tmp_output_dir):
-        result = _read_all_existing_ids(tmp_output_dir)
+        result = read_existing_ids(tmp_output_dir)
         assert result == set()
 
     def test_frontmatter_scanning(self, tmp_output_dir):
         (tmp_output_dir / "2026-02-24-alice.md").write_text(
-            '---\ntitle: "Hello"\ntweet_id: "100"\n---\n> Hello\n'
+            '---\ntitle: "Hello"\ntweet_url: "https://x.com/alice/status/100"\n---\n> Hello\n'
         )
         (tmp_output_dir / "2026-02-24-bob.md").write_text(
-            '---\ntitle: "World"\ntweet_id: "200"\n---\n> World\n'
+            '---\ntitle: "World"\ntweet_url: "https://x.com/bob/status/200"\n---\n> World\n'
         )
-        result = _read_all_existing_ids(tmp_output_dir)
+        result = read_existing_ids(tmp_output_dir)
         assert result == {"100", "200"}
 
     def test_index_md_skipped(self, tmp_output_dir):
         (tmp_output_dir / "index.md").write_text(
-            '---\ntitle: X Bookmarks\ntweet_id: "999"\n---\nDataview query\n'
+            '---\ntitle: X Bookmarks\ntweet_url: "https://x.com/x/status/999"\n---\nDataview query\n'
         )
         (tmp_output_dir / "2026-02-24-alice.md").write_text(
-            '---\ntitle: "Hello"\ntweet_id: "100"\n---\n> Hello\n'
+            '---\ntitle: "Hello"\ntweet_url: "https://x.com/alice/status/100"\n---\n> Hello\n'
         )
-        result = _read_all_existing_ids(tmp_output_dir)
+        result = read_existing_ids(tmp_output_dir)
         assert result == {"100"}
 
     def test_nonexistent_dir(self, tmp_path):
-        result = _read_all_existing_ids(tmp_path / "nonexistent")
+        result = read_existing_ids(tmp_path / "nonexistent")
         assert result == set()
 
 
 class TestWriteBookmarks:
     def test_post_creation(self, tmp_output_dir):
-        cat = Category(slug="ai-agents", display_name="AI Agents")
+        cat = _make_category()
         tweet = _make_tweet(id="123", username="alice")
-        ct = CategorizedTweet(tweet=tweet, category=cat)
+        ct = CategorizedTweet(tweet=tweet, category=cat, title="Hello world")
         stats = write_bookmarks((ct,), tmp_output_dir)
 
         files = list(tmp_output_dir.glob("2026-02-24-alice.md"))
         assert len(files) == 1
         content = files[0].read_text()
-        assert "type: post" in content
+        assert 'type: "post"' in content
+        assert "## Hello world" in content
         assert "> Hello world" in content
+        assert "## References" in content
         assert stats["bookmarks_written"] == 1
 
     def test_article_creation(self, tmp_output_dir):
-        cat = Category(slug="tech", display_name="Tech")
+        cat = _make_category(slug="tech", display_name="Tech", sub_category="General")
         tweet = _make_tweet(
             id="456", username="bob",
             article_url="https://x.com/bob/articles/456",
             article_content="# Great Article\n\nBody text.",
-            article_title="Great Article",
         )
-        ct = CategorizedTweet(tweet=tweet, category=cat)
+        ct = CategorizedTweet(tweet=tweet, category=cat, title="Great Article")
         stats = write_bookmarks((ct,), tmp_output_dir)
 
         files = list(tmp_output_dir.glob("2026-02-24-bob.md"))
         assert len(files) == 1
         content = files[0].read_text()
-        assert "type: article" in content
+        assert 'type: "article"' in content
+        assert "## Great Article" in content
         assert "# Great Article" in content
-        assert "Body text." in content
-        # No blockquote for articles
-        assert "> Hello world" not in content
+        assert "## References" in content
         assert stats["bookmarks_written"] == 1
 
     def test_dedup_skips_existing(self, tmp_output_dir):
-        # Pre-create a file with tweet_id 123
         (tmp_output_dir / "2026-02-24-alice.md").write_text(
-            '---\ntitle: "Hello"\ntweet_id: "123"\n---\n> Hello\n'
+            '---\ntitle: "Hello"\ntweet_url: "https://x.com/alice/status/123"\n---\n> Hello\n'
         )
-        cat = Category(slug="tech", display_name="Tech")
+        cat = _make_category()
         tweet = _make_tweet(id="123", username="alice")
-        ct = CategorizedTweet(tweet=tweet, category=cat)
+        ct = CategorizedTweet(tweet=tweet, category=cat, title="Hello world")
         stats = write_bookmarks((ct,), tmp_output_dir)
         assert stats["duplicates_skipped"] == 1
         assert stats["bookmarks_written"] == 0
 
     def test_collisions_get_suffix(self, tmp_output_dir):
-        cat = Category(slug="tech", display_name="Tech")
+        cat = _make_category()
         tweet1 = _make_tweet(id="1", username="alice", text="First tweet")
         tweet2 = _make_tweet(id="2", username="alice", text="Second tweet")
-        ct1 = CategorizedTweet(tweet=tweet1, category=cat)
-        ct2 = CategorizedTweet(tweet=tweet2, category=cat)
+        ct1 = CategorizedTweet(tweet=tweet1, category=cat, title="First tweet")
+        ct2 = CategorizedTweet(tweet=tweet2, category=cat, title="Second tweet")
         stats = write_bookmarks((ct1, ct2), tmp_output_dir)
 
         assert (tmp_output_dir / "2026-02-24-alice.md").exists()
@@ -339,9 +433,9 @@ class TestWriteBookmarks:
         assert stats["bookmarks_written"] == 2
 
     def test_index_creation(self, tmp_output_dir):
-        cat = Category(slug="tech", display_name="Tech")
+        cat = _make_category()
         tweet = _make_tweet(id="1")
-        ct = CategorizedTweet(tweet=tweet, category=cat)
+        ct = CategorizedTweet(tweet=tweet, category=cat, title="Test")
         write_bookmarks((ct,), tmp_output_dir)
 
         index = tmp_output_dir / "index.md"
@@ -351,23 +445,38 @@ class TestWriteBookmarks:
         assert "X Bookmarks" in content
 
     def test_stats(self, tmp_output_dir):
-        cat = Category(slug="tech", display_name="Tech")
+        cat = _make_category()
         tweet1 = _make_tweet(id="1")
         tweet2 = _make_tweet(id="2")
-        ct1 = CategorizedTweet(tweet=tweet1, category=cat)
-        ct2 = CategorizedTweet(tweet=tweet2, category=cat)
+        ct1 = CategorizedTweet(tweet=tweet1, category=cat, title="Title 1")
+        ct2 = CategorizedTweet(tweet=tweet2, category=cat, title="Title 2")
         stats = write_bookmarks((ct1, ct2), tmp_output_dir)
         assert stats["bookmarks_written"] == 2
         assert stats["duplicates_skipped"] == 0
-        assert stats["files_written"] == 2  # 2 bookmark files
+        assert stats["files_written"] == 2
 
     def test_empty_input(self, tmp_output_dir):
         stats = write_bookmarks((), tmp_output_dir)
         assert stats["bookmarks_written"] == 0
         assert stats["files_written"] == 0
         assert stats["duplicates_skipped"] == 0
-        # Index should still be written
         assert (tmp_output_dir / "index.md").exists()
+
+    def test_written_file_has_valid_yaml(self, tmp_output_dir):
+        cat = _make_category(sub_category="Inference & Serving")
+        tweet = _make_tweet(id="1", name="Alice O'Brien")
+        ct = CategorizedTweet(tweet=tweet, category=cat, title="Test YAML Safety")
+        write_bookmarks((ct,), tmp_output_dir)
+
+        files = [f for f in tmp_output_dir.glob("*.md") if f.name != "index.md"]
+        assert len(files) == 1
+        content = files[0].read_text()
+        # Extract YAML between --- markers
+        parts = content.split("---")
+        yaml_body = parts[1]
+        parsed = yaml.safe_load(yaml_body)
+        assert parsed["title"] == "Test YAML Safety"
+        assert parsed["subCategory"] == "Inference & Serving"
 
 
 class TestWriteIndexFile:
@@ -376,7 +485,9 @@ class TestWriteIndexFile:
         content = (tmp_output_dir / "index.md").read_text()
         assert "```dataview" in content
         assert "TABLE" in content
-        assert "SORT date DESC" in content
+        assert "subCategory," in content
+        assert 'FROM "03_AI/x"' in content
+        assert "SORT category ASC, subCategory ASC, date DESC" in content
 
     def test_title_frontmatter(self, tmp_output_dir):
         _write_index_file(tmp_output_dir)
