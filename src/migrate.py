@@ -6,7 +6,6 @@ import logging
 import os
 import re
 import sys
-import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,7 +21,7 @@ from src.markdown_writer import _escape_yaml_string, _slugify_title, _validate_f
 logger = logging.getLogger(__name__)
 
 _MODEL = "claude-sonnet-4-6"
-_MAX_TOKENS = 8192
+_MAX_TOKENS = 16384
 
 _DEPRECATED_FIELDS = frozenset({
     "author_name", "tweet_id", "likes", "retweets",
@@ -147,7 +146,7 @@ def _build_migration_payload(bookmarks: list[ParsedBookmark]) -> str:
         fm = bm.frontmatter
         bm_type = fm.get("type", "post")
         body_text = bm.body
-        if bm_type != "article" and len(body_text) > 2000:
+        if len(body_text) > 2000:
             body_text = body_text[:2000]
         entries.append({
             "filename": bm.filepath.name,
@@ -180,10 +179,14 @@ def _parse_migration_response(text: str) -> dict[str, dict]:
 def generate_titles_batch(
     bookmarks: list[ParsedBookmark],
     api_key: str,
-    batch_size: int = 10,
+    batch_size: int = 150,
     directory: Path | None = None,
 ) -> dict[str, dict]:
-    """Send batches to Claude, return {filename: {title, category, sub_category}}."""
+    """Send batches to Claude, return {filename: {title, category, sub_category}}.
+
+    Default batch_size=150 sends all bookmarks in a single call.
+    The Anthropic SDK handles rate-limit retries automatically.
+    """
     client = anthropic.Anthropic(api_key=api_key)
     taxonomy = read_existing_taxonomy(directory) if directory is not None else {}
     system_prompt = _build_migration_prompt(taxonomy)
@@ -209,11 +212,6 @@ def generate_titles_batch(
         batch_results = _parse_migration_response(raw_text)
         all_results.update(batch_results)
 
-        if i + batch_size < len(bookmarks):
-            logger.info("Rate limit pause (62s)...")
-            time.sleep(62)
-
-        # Log any bookmarks in the batch that didn't get a response
         for bm in batch:
             if bm.filepath.name not in batch_results:
                 logger.warning(
@@ -333,7 +331,7 @@ def migrate_single_file(
 def migrate_directory(
     directory: Path,
     api_key: str,
-    batch_size: int = 30,
+    batch_size: int = 150,
     dry_run: bool = False,
 ) -> list[MigrationResult]:
     """Scan directory for *.md, batch Claude calls, migrate each file."""
@@ -371,7 +369,7 @@ def migrate_directory(
     logger.info("Generating titles for %d bookmarks...", len(parsed_bookmarks))
     title_map = generate_titles_batch(parsed_bookmarks, api_key, batch_size, directory=directory)
 
-    existing_names: set[str] = {"index.md"}
+    existing_names: set[str] = set()
 
     for bm in parsed_bookmarks:
         title_data = title_map.get(bm.filepath.name, {})
@@ -425,8 +423,8 @@ def main() -> None:
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=30,
-        help="Number of files per Claude API call (default: 30)",
+        default=150,
+        help="Number of files per Claude API call (default: 150)",
     )
     parser.add_argument(
         "--dry-run",

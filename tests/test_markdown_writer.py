@@ -13,7 +13,6 @@ from src.markdown_writer import (
     _format_post_body,
     _format_article_body,
     read_existing_ids,
-    _write_index_file,
     write_bookmarks,
 )
 from src.models import (
@@ -449,18 +448,6 @@ class TestWriteBookmarks:
         assert (tmp_output_dir / "same-title-2.md").exists()
         assert stats["bookmarks_written"] == 2
 
-    def test_index_creation(self, tmp_output_dir):
-        cat = _make_category()
-        tweet = _make_tweet(id="1")
-        ct = CategorizedTweet(tweet=tweet, category=cat, title="Test")
-        write_bookmarks((ct,), tmp_output_dir)
-
-        index = tmp_output_dir / "index.md"
-        assert index.exists()
-        content = index.read_text()
-        assert "dataview" in content.lower()
-        assert "X Bookmarks" in content
-
     def test_stats(self, tmp_output_dir):
         cat = _make_category()
         tweet1 = _make_tweet(id="1")
@@ -477,7 +464,6 @@ class TestWriteBookmarks:
         assert stats["bookmarks_written"] == 0
         assert stats["files_written"] == 0
         assert stats["duplicates_skipped"] == 0
-        assert (tmp_output_dir / "index.md").exists()
 
     def test_written_file_has_valid_yaml(self, tmp_output_dir):
         cat = _make_category(sub_category="Inference & Serving")
@@ -496,25 +482,3 @@ class TestWriteBookmarks:
         assert parsed["subCategory"] == "Inference & Serving"
 
 
-class TestWriteIndexFile:
-    def test_dataview_query_present(self, tmp_output_dir):
-        _write_index_file(tmp_output_dir)
-        content = (tmp_output_dir / "index.md").read_text()
-        assert "```dataview" in content
-        assert "TABLE" in content
-        assert "subCategory," in content
-        assert 'FROM "03_AI/x"' in content
-        assert "SORT category ASC, subCategory ASC, date DESC" in content
-
-    def test_title_frontmatter(self, tmp_output_dir):
-        _write_index_file(tmp_output_dir)
-        content = (tmp_output_dir / "index.md").read_text()
-        assert content.startswith("---\n")
-        assert "title: X Bookmarks" in content
-
-    def test_overwrite_behavior(self, tmp_output_dir):
-        (tmp_output_dir / "index.md").write_text("old content")
-        _write_index_file(tmp_output_dir)
-        content = (tmp_output_dir / "index.md").read_text()
-        assert "old content" not in content
-        assert "dataview" in content.lower()

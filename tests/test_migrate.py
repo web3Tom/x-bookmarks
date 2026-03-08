@@ -199,7 +199,7 @@ class TestBuildMigrationPayload:
         data = json.loads(payload)
         assert len(data[0]["body"]) <= 2001  # 2000 chars + possible newline
 
-    def test_no_truncation_for_articles(self, tmp_path: Path):
+    def test_articles_also_truncated(self, tmp_path: Path):
         long_body = "x" * 5000
         filepath = tmp_path / "article.md"
         filepath.write_text(
@@ -209,7 +209,7 @@ class TestBuildMigrationPayload:
         bm = parse_existing_bookmark(filepath)
         payload = _build_migration_payload([bm])
         data = json.loads(payload)
-        assert len(data[0]["body"]) > 2000
+        assert len(data[0]["body"]) == 2000
 
 
 # --- TestBuildMigratedFrontmatter ---

@@ -49,7 +49,7 @@ def _build_run_record(
             "files_written": files_written,
             "duplicates_skipped": duplicates_skipped,
             "filenames": filenames or [],
-            "index_updated": files_written > 0,
+            "index_updated": False,
         },
         "token_usage": token_usage or {},
         "categories": categories or {},
@@ -138,7 +138,7 @@ def main() -> None:
     filenames = stats["filenames"]
     for fname in filenames:
         print(f"  + {fname}")
-    print(f"  ~ index.md (updated)")
+
 
     category_counts = _count_categories(categorized)
 

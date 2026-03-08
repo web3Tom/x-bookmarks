@@ -153,27 +153,6 @@ def _format_article_body(tweet: Tweet, title: str) -> str:
     return notes + "\n\n" + refs + "\n"
 
 
-def _write_index_file(output_dir: Path) -> None:
-    """Dataview query table, always overwritten."""
-    content = """---
-title: X Bookmarks
----
-
-```dataview
-TABLE
-  author,
-  category,
-  subCategory,
-  type,
-  date,
-  read
-FROM "03_AI/x"
-WHERE type
-SORT category ASC, subCategory ASC, date DESC
-```
-"""
-    (output_dir / "index.md").write_text(content)
-
 
 def write_bookmarks(
     categorized: tuple[CategorizedTweet, ...],
@@ -217,7 +196,5 @@ def write_bookmarks(
         stats["bookmarks_written"] += 1
         stats["filenames"].append(filename)
         existing_ids.add(tweet.id)
-
-    _write_index_file(output_dir)
 
     return stats

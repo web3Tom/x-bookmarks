@@ -69,7 +69,6 @@ class TestMain:
         assert "New bookmarks:      2" in output
         assert "+ hello.md" in output
         assert "+ hello-2.md" in output
-        assert "~ index.md (updated)" in output
 
     @patch("src.main.load_config")
     def test_config_error_exits(self, mock_config, capsys):
@@ -285,7 +284,7 @@ class TestRunHistory:
         assert record["bookmarks"]["novel"] == 1
         assert record["output"]["files_written"] == 1
         assert record["output"]["filenames"] == ["hello.md"]
-        assert record["output"]["index_updated"] is True
+        assert record["output"]["index_updated"] is False
         assert record["token_usage"] == {"input_tokens": 10, "output_tokens": 5}
         assert "run_id" in record
         assert "started_at" in record
@@ -354,7 +353,7 @@ class TestBuildRunRecord:
         )
         assert record["bookmarks"]["novel"] == 7
         assert record["output"]["files_written"] == 7
-        assert record["output"]["index_updated"] is True
+        assert record["output"]["index_updated"] is False
         assert record["categories"] == {"AI Coding": 5, "ML Research": 2}
 
 

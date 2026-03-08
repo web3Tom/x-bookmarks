@@ -39,12 +39,43 @@ Bookmarks are written to `~/Documents/projects/workspace/knowledge/03_AI/x/x-pos
 - Fetches up to 800 bookmarks with automatic pagination
 - Automatic OAuth token refresh on expiry
 - Single-batch categorization via Claude (claude-sonnet-4-6)
+- LLM-generated titles and title-based filenames (`{title-slug}.md`)
 - Deduplication: re-running skips already-saved bookmarks
-- Obsidian-compatible frontmatter with bookmark counts and timestamps
+- Obsidian-compatible frontmatter with Dataview support
 - Supports long-form tweets (note_tweet) and X Articles
+
+## Migration
+
+Migrate existing bookmark files to the current schema. This will:
+
+- Strip deprecated frontmatter fields (`author_name`, `tweet_id`, `likes`, `retweets`, `replies`, `bookmarks`, `has_media`, `has_links`)
+- Generate LLM titles via Claude (replaces raw tweet text titles)
+- Rename files from `{date}-{author}.md` to `{title-slug}.md`
+- Normalize frontmatter quoting and update body headings
+
+### Dry run (preview changes, no files modified)
+
+```bash
+uv run python -m src.migrate ~/Documents/projects/workspace/knowledge/03_AI/x/x-posts --dry-run --verbose
+```
+
+### Live migration
+
+```bash
+uv run python -m src.migrate ~/Documents/projects/workspace/knowledge/03_AI/x/x-posts --verbose
+```
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Preview changes without writing or renaming files |
+| `--verbose` | Show per-file details (old→new filename, title changes, removed fields) |
+| `--batch-size N` | Files per Claude API call (default: 150) |
+| `--api-key KEY` | Anthropic API key (defaults to `ANTHROPIC_API_KEY` env var) |
 
 ## Development
 
 ```bash
-uv run pytest --cov=src --cov-report=term-missing
+uv run python -m pytest --cov=src --cov-report=term-missing
 ```

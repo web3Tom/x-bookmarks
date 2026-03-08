@@ -10,8 +10,7 @@ Primary goals:
 
 ## Directory Layout
 
-- `x-posts/`: note files and index.
-- `x-posts/index.md`: Dataview dashboard.
+- `x-posts/`: note files.
 
 ## File Naming
 
@@ -82,26 +81,6 @@ Rules:
 
 Category names should reflect specific AI subject depth (e.g., `Agent Architectures`, `Context Engineering`), not generic buckets (e.g., `AI Engineering`, `Miscellaneous`).
 
-## index.md Contract
-
-`/x-posts/index.md` Dataview must continue to work with `subCategory`:
-
-```dataview
-TABLE
-  author,
-  category,
-  subCategory,
-  type,
-  date,
-  read,
-  likes
-FROM "03_AI/x"
-WHERE type
-SORT category ASC, subCategory ASC, date DESC
-```
-
-If schema changes, update both note frontmatter and Dataview together.
-
 ## Skills to Use
 
 When available in this environment:
@@ -117,8 +96,7 @@ Use `obsidian-markdown` by default for this directory.
 
 ## Validation Checklist (Before Finishing)
 
-- No note in `x-test/` (except `index.md`) is missing `category` or `subCategory`.
+- No note in `x-posts/` is missing `category` or `subCategory`.
 - No note uses `sub-category`.
 - No malformed frontmatter keys.
 - No broken/truncated title placeholders.
-- `index.md` Dataview parses without errors.
