@@ -1,6 +1,7 @@
 import json
 import pytest
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from src.categorizer import (
@@ -9,8 +10,8 @@ from src.categorizer import (
     categorize_tweets,
     _slugify,
     _sanitize_title,
-    SYSTEM_PROMPT,
-    TAXONOMY,
+    _build_system_prompt,
+    read_existing_taxonomy,
 )
 from src.models import Tweet, Category, CategorizedTweet, User
 
@@ -27,6 +28,22 @@ def _make_tweet(id: str, text: str, username: str = "user") -> Tweet:
         external_links=(),
         note_tweet_text=None,
         article_url=None,
+    )
+
+
+_FRONTMATTER_TEMPLATE = (
+    '---\ntitle: "{title}"\nauthor: "@{username}"\n'
+    'category: "{category}"\nsubCategory: "{sub}"\n'
+    'date: 2025-01-01\nread: false\ntype: "post"\n'
+    'tweet_url: "https://x.com/{username}/status/{id}"\n---\n\n## {title}\n\n> tweet text\n'
+)
+
+
+def _write_bookmark(path: Path, *, title: str, username: str, category: str, sub: str, id: str) -> None:
+    path.write_text(
+        _FRONTMATTER_TEMPLATE.format(
+            title=title, username=username, category=category, sub=sub, id=id
+        )
     )
 
 
@@ -111,33 +128,84 @@ class TestSlugify:
         assert _slugify("General") == "general"
 
 
-class TestSystemPrompt:
-    def test_contains_all_taxonomy_categories(self):
-        for category in TAXONOMY:
-            assert category in SYSTEM_PROMPT
+class TestReadExistingTaxonomy:
+    def test_returns_empty_when_dir_missing(self, tmp_path):
+        result = read_existing_taxonomy(tmp_path / "nonexistent")
+        assert result == {}
 
-    def test_contains_all_subcategories(self):
-        for subs in TAXONOMY.values():
-            for sub in subs:
-                assert sub in SYSTEM_PROMPT
+    def test_reads_category_and_subcategory(self, tmp_path):
+        _write_bookmark(
+            tmp_path / "2025-01-01-user.md",
+            title="Test", username="user", category="AI Coding", sub="Coding Workflows", id="1",
+        )
+        result = read_existing_taxonomy(tmp_path)
+        assert result == {"AI Coding": {"Coding Workflows"}}
 
-    def test_contains_taxonomy_instruction(self):
-        assert "MUST pick from the categories" in SYSTEM_PROMPT
-        assert "whenever possible" in SYSTEM_PROMPT
+    def test_aggregates_multiple_files(self, tmp_path):
+        _write_bookmark(tmp_path / "a.md", title="A", username="u1", category="AI Coding", sub="Coding Workflows", id="1")
+        _write_bookmark(tmp_path / "b.md", title="B", username="u2", category="AI Coding", sub="Prompt & Context Engineering", id="2")
+        _write_bookmark(tmp_path / "c.md", title="C", username="u3", category="ML Research", sub="Applied ML", id="3")
+        result = read_existing_taxonomy(tmp_path)
+        assert result == {
+            "AI Coding": {"Coding Workflows", "Prompt & Context Engineering"},
+            "ML Research": {"Applied ML"},
+        }
 
-    def test_allows_new_categories_when_necessary(self):
-        assert "MAY create a new category" in SYSTEM_PROMPT
-        assert "Title Case" in SYSTEM_PROMPT
-        assert "Do NOT duplicate" in SYSTEM_PROMPT
+    def test_skips_index_md(self, tmp_path):
+        (tmp_path / "index.md").write_text(
+            '---\ncategory: "Ignored"\nsubCategory: "Ignored"\n---'
+        )
+        result = read_existing_taxonomy(tmp_path)
+        assert result == {}
 
-    def test_contains_general_fallback_instruction(self):
-        assert '"General"' in SYSTEM_PROMPT
-        assert '"Uncategorized"' in SYSTEM_PROMPT
+    def test_skips_files_without_both_fields(self, tmp_path):
+        (tmp_path / "2025-01-01-user.md").write_text('---\ntitle: "No category here"\n---')
+        result = read_existing_taxonomy(tmp_path)
+        assert result == {}
 
-    def test_contains_title_generation_instruction(self):
-        assert "title" in SYSTEM_PROMPT.lower()
-        assert "max 80 chars" in SYSTEM_PROMPT
-        assert "YAML-safe" in SYSTEM_PROMPT
+    def test_returns_empty_when_dir_is_empty(self, tmp_path):
+        result = read_existing_taxonomy(tmp_path)
+        assert result == {}
+
+
+class TestBuildSystemPrompt:
+    def test_empty_taxonomy_prohibits_general_and_uncategorized(self):
+        prompt = _build_system_prompt({})
+        assert 'Do NOT use "General" or "Uncategorized"' in prompt
+
+    def test_empty_taxonomy_first_run_message(self):
+        prompt = _build_system_prompt({})
+        assert "first run" in prompt
+
+    def test_populated_taxonomy_lists_existing_categories(self):
+        taxonomy = {"AI Coding": {"Coding Workflows"}, "ML Research": {"Applied ML"}}
+        prompt = _build_system_prompt(taxonomy)
+        assert "AI Coding" in prompt
+        assert "Coding Workflows" in prompt
+        assert "ML Research" in prompt
+        assert "Applied ML" in prompt
+
+    def test_populated_taxonomy_prohibits_general_and_uncategorized(self):
+        prompt = _build_system_prompt({"AI Coding": {"Coding Workflows"}})
+        assert 'Do NOT use "General" or "Uncategorized"' in prompt
+
+    def test_contains_title_generation_rules(self):
+        prompt = _build_system_prompt({})
+        assert "max 80 chars" in prompt
+        assert "YAML-safe" in prompt
+
+    def test_allows_new_categories_when_taxonomy_exists(self):
+        prompt = _build_system_prompt({"AI Coding": {"Coding Workflows"}})
+        assert "Title Case" in prompt
+
+    def test_prefers_existing_categories(self):
+        prompt = _build_system_prompt({"AI Coding": {"Coding Workflows"}})
+        assert "Prefer the existing" in prompt
+
+    def test_contains_response_format_example(self):
+        prompt = _build_system_prompt({})
+        assert "tweet_id" in prompt
+        assert "sub_category" in prompt
 
 
 class TestParseCategorizationResponse:
@@ -243,7 +311,7 @@ class TestCategorizeTweets:
         assert usage["input_tokens"] == 500
 
     @patch("src.categorizer.anthropic")
-    def test_uncategorized_tweets_get_general(self, mock_anthropic_module):
+    def test_missing_tweet_falls_back_to_general(self, mock_anthropic_module):
         mock_client = MagicMock()
         mock_anthropic_module.Anthropic.return_value = mock_client
         mock_response = MagicMock()
@@ -255,16 +323,16 @@ class TestCategorizeTweets:
         mock_response.usage.output_tokens = 50
         mock_client.messages.create.return_value = mock_response
 
-        tweets = (_make_tweet("1", "Python"), _make_tweet("2", "Uncategorized"))
+        tweets = (_make_tweet("1", "Python"), _make_tweet("2", "Omitted by Claude"))
         result, _ = categorize_tweets(tweets, api_key="sk-test")
 
         assert len(result) == 2
         categorized_map = {ct.tweet.id: ct for ct in result}
         assert categorized_map["1"].category.slug == "ai-coding"
         assert categorized_map["1"].title == "Python Insights"
+        # tweet 2 was omitted from Claude response — code-level fallback applies
         assert categorized_map["2"].category.slug == "general"
         assert categorized_map["2"].category.sub_category == "Uncategorized"
-        assert categorized_map["2"].title == "Uncategorized"  # fallback from _sanitize_title
 
     @patch("src.categorizer.anthropic")
     def test_fallback_title_when_claude_returns_empty(self, mock_anthropic_module):
@@ -285,7 +353,7 @@ class TestCategorizeTweets:
         assert result[0].title == "Python tips"  # sanitized display_text fallback
 
     @patch("src.categorizer.anthropic")
-    def test_system_prompt_used(self, mock_anthropic_module):
+    def test_dynamic_prompt_used_no_general_fallback(self, mock_anthropic_module):
         mock_client = MagicMock()
         mock_anthropic_module.Anthropic.return_value = mock_client
         mock_response = MagicMock()
@@ -298,6 +366,29 @@ class TestCategorizeTweets:
         categorize_tweets((), api_key="sk-test")
 
         call_kwargs = mock_client.messages.create.call_args
-        assert call_kwargs.kwargs["system"] == SYSTEM_PROMPT
+        system = call_kwargs.kwargs["system"]
+        assert "bookmark categorizer" in system
+        assert 'Do NOT use "General" or "Uncategorized"' in system
         assert call_kwargs.kwargs["model"] == "claude-sonnet-4-6"
         assert call_kwargs.kwargs["max_tokens"] == 8192
+
+    @patch("src.categorizer.anthropic")
+    def test_existing_taxonomy_injected_into_prompt(self, mock_anthropic_module, tmp_path):
+        mock_client = MagicMock()
+        mock_anthropic_module.Anthropic.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock()]
+        mock_response.content[0].text = "[]"
+        mock_response.usage.input_tokens = 0
+        mock_response.usage.output_tokens = 0
+        mock_client.messages.create.return_value = mock_response
+
+        _write_bookmark(tmp_path / "a.md", title="A", username="u", category="AI Coding", sub="Coding Workflows", id="1")
+
+        categorize_tweets((), api_key="sk-test", output_dir=tmp_path)
+
+        call_kwargs = mock_client.messages.create.call_args
+        system = call_kwargs.kwargs["system"]
+        assert "AI Coding" in system
+        assert "Coding Workflows" in system
+        assert "Prefer the existing" in system

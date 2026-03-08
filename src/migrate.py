@@ -16,8 +16,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from src.categorizer import TAXONOMY, _sanitize_title, _slugify
-from src.markdown_writer import _escape_yaml_string, _validate_frontmatter
+from src.categorizer import read_existing_taxonomy, _sanitize_title, _slugify
+from src.markdown_writer import _escape_yaml_string, _slugify_title, _validate_frontmatter
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,8 @@ class MigrationResult:
     fields_removed: tuple[str, ...]
     heading_changed: bool
     skipped: bool
+    old_filename: str = ""
+    new_filename: str = ""
 
 
 def _split_frontmatter_body(content: str) -> tuple[str, str]:
@@ -93,40 +95,49 @@ def parse_existing_bookmark(filepath: Path) -> ParsedBookmark | None:
         return None
 
 
-def _build_taxonomy_block() -> str:
+def _build_taxonomy_block(taxonomy: dict[str, set[str]]) -> str:
     """Format taxonomy for the migration prompt."""
     lines: list[str] = []
-    for category, subs in TAXONOMY.items():
+    for category, subs in sorted(taxonomy.items()):
         lines.append(f"- {category}")
-        for sub in subs:
+        for sub in sorted(subs):
             lines.append(f"  - {sub}")
     return "\n".join(lines)
 
 
-def _build_migration_prompt() -> str:
+def _build_migration_prompt(taxonomy: dict[str, set[str]]) -> str:
     """System prompt for title generation and category validation."""
-    return f"""\
-You are a bookmark migration assistant. Given a JSON array of existing bookmarks, \
-generate a concise, descriptive title for each and validate/correct the category \
-and sub_category against the fixed taxonomy.
+    if taxonomy:
+        taxonomy_section = (
+            f"Existing categories and subcategories in the vault:\n"
+            f"{_build_taxonomy_block(taxonomy)}\n\n"
+            "- Prefer the existing categories and subcategories.\n"
+            "- If the existing category/sub_category is valid, keep it as-is.\n"
+            "- If invalid, pick the closest match from the existing taxonomy.\n"
+            "- If truly no existing category fits, create a new one in Title Case (2-4 words).\n"
+            "- Do NOT use \"General\" or \"Uncategorized\" — every bookmark deserves a meaningful category."
+        )
+    else:
+        taxonomy_section = (
+            "No existing categories yet.\n\n"
+            "- Create meaningful categories in Title Case (e.g., \"AI Coding\", \"Agent Architectures\").\n"
+            "- Keep names concise (2-4 words).\n"
+            "- Do NOT use \"General\" or \"Uncategorized\" — every bookmark deserves a meaningful category."
+        )
 
-Allowed categories and subcategories:
-{_build_taxonomy_block()}
-
-Rules:
-- Generate a title (max 80 chars) for each bookmark:
-  - For articles: prefer the article's actual title or topic
-  - For posts: summarize the key insight or topic (do not just truncate the text)
-  - Title must be YAML-safe: no colons, no quotes, no newlines, no brackets
-- Validate the existing category and sub_category against the taxonomy above.
-  - If valid, keep them as-is.
-  - If invalid or not in the taxonomy, pick the closest match from the taxonomy.
-  - If nothing fits, use category "General" with sub_category "Uncategorized".
-- Return ONLY a JSON array, no other text.
-
-Response format:
-[{{"filename": "...", "title": "...", "category": "AI Coding", "sub_category": "Coding Workflows"}}, ...]
-"""
+    return (
+        "You are a bookmark migration assistant. Given a JSON array of existing bookmarks, "
+        "generate a concise, descriptive title for each and assign a category and sub_category.\n\n"
+        f"{taxonomy_section}\n\n"
+        "Title rules:\n"
+        "- Generate a title (max 80 chars) for each bookmark.\n"
+        "- For articles: prefer the article's actual title or topic.\n"
+        "- For posts: summarize the key insight or topic (do not just truncate the text).\n"
+        "- Title must be YAML-safe: no colons, no quotes, no newlines, no brackets.\n\n"
+        "Return ONLY a JSON array, no other text.\n\n"
+        "Response format:\n"
+        '[{"filename": "...", "title": "...", "category": "AI Coding", "sub_category": "Coding Workflows"}, ...]'
+    )
 
 
 def _build_migration_payload(bookmarks: list[ParsedBookmark]) -> str:
@@ -170,10 +181,12 @@ def generate_titles_batch(
     bookmarks: list[ParsedBookmark],
     api_key: str,
     batch_size: int = 10,
+    directory: Path | None = None,
 ) -> dict[str, dict]:
     """Send batches to Claude, return {filename: {title, category, sub_category}}."""
     client = anthropic.Anthropic(api_key=api_key)
-    system_prompt = _build_migration_prompt()
+    taxonomy = read_existing_taxonomy(directory) if directory is not None else {}
+    system_prompt = _build_migration_prompt(taxonomy)
     all_results: dict[str, dict] = {}
 
     for i in range(0, len(bookmarks), batch_size):
@@ -253,13 +266,29 @@ def _replace_body_heading(body: str, new_title: str) -> str:
     return re.sub(r"^## .+$", f"## {new_title}", body, count=1, flags=re.MULTILINE)
 
 
+def _build_rename_filename(title: str, existing_names: set[str]) -> str:
+    """{title-slug}.md with -2, -3 collision suffix."""
+    base = _slugify_title(title)
+    candidate = f"{base}.md"
+    if candidate not in existing_names:
+        return candidate
+    counter = 2
+    while True:
+        candidate = f"{base}-{counter}.md"
+        if candidate not in existing_names:
+            return candidate
+        counter += 1
+
+
 def migrate_single_file(
     parsed: ParsedBookmark,
     title_data: dict,
+    existing_names: set[str] | None = None,
 ) -> MigrationResult:
-    """Rebuild frontmatter + body, write file in-place, return result."""
+    """Rebuild frontmatter + body, write file in-place, rename to title slug."""
     fm = parsed.frontmatter
     old_title = str(fm.get("title", ""))
+    old_filename = parsed.filepath.name
 
     new_title = title_data.get("title", "")
     if not new_title:
@@ -278,15 +307,26 @@ def migrate_single_file(
     heading_changed = old_body != new_body
 
     content = new_frontmatter + "\n" + new_body
+
+    # Determine new filename from title slug
+    names = existing_names if existing_names is not None else set()
+    new_filename = _build_rename_filename(new_title, names)
+
+    new_path = parsed.filepath.parent / new_filename
     parsed.filepath.write_text(content, encoding="utf-8")
 
+    if new_filename != old_filename:
+        parsed.filepath.rename(new_path)
+
     return MigrationResult(
-        filepath=parsed.filepath,
+        filepath=new_path,
         old_title=old_title,
         new_title=new_title,
         fields_removed=removed,
         heading_changed=heading_changed,
         skipped=False,
+        old_filename=old_filename,
+        new_filename=new_filename,
     )
 
 
@@ -329,7 +369,9 @@ def migrate_directory(
         return results
 
     logger.info("Generating titles for %d bookmarks...", len(parsed_bookmarks))
-    title_map = generate_titles_batch(parsed_bookmarks, api_key, batch_size)
+    title_map = generate_titles_batch(parsed_bookmarks, api_key, batch_size, directory=directory)
+
+    existing_names: set[str] = {"index.md"}
 
     for bm in parsed_bookmarks:
         title_data = title_map.get(bm.filepath.name, {})
@@ -342,18 +384,24 @@ def migrate_directory(
 
         if dry_run:
             old_title = str(bm.frontmatter.get("title", ""))
+            new_title = title_data.get("title", old_title)
             removed = tuple(k for k in bm.frontmatter if k in _DEPRECATED_FIELDS)
             has_notes_heading = bool(re.search(r"^## .+$", bm.body, re.MULTILINE))
+            new_filename = _build_rename_filename(new_title, existing_names)
+            existing_names.add(new_filename)
             results.append(MigrationResult(
                 filepath=bm.filepath,
                 old_title=old_title,
-                new_title=title_data.get("title", old_title),
+                new_title=new_title,
                 fields_removed=removed,
                 heading_changed=has_notes_heading,
                 skipped=False,
+                old_filename=bm.filepath.name,
+                new_filename=new_filename,
             ))
         else:
-            result = migrate_single_file(bm, title_data)
+            result = migrate_single_file(bm, title_data, existing_names)
+            existing_names.add(result.new_filename)
             results.append(result)
 
     return results
@@ -421,10 +469,12 @@ def main() -> None:
     migrated = sum(1 for r in results if not r.skipped)
     heading_changes = sum(1 for r in results if r.heading_changed)
     total_removed = sum(len(r.fields_removed) for r in results)
+    renamed = sum(1 for r in results if not r.skipped and r.old_filename != r.new_filename)
 
     print(f"\n--- Migration Summary ({mode}) ---")
     print(f"Files processed: {len(results)}")
     print(f"Migrated:        {migrated}")
+    print(f"Renamed:         {renamed}")
     print(f"Skipped (errors):{skipped}")
     print(f"Headings updated:{heading_changes}")
     print(f"Fields removed:  {total_removed}")
@@ -436,7 +486,7 @@ def main() -> None:
             else:
                 label = "DRY" if args.dry_run else "OK"
                 title_change = f'"{r.old_title}" -> "{r.new_title}"'
-                print(f"  {label:4}  {r.filepath.name}  {title_change}")
+                print(f"  {label:4}  {r.old_filename} -> {r.new_filename}  {title_change}")
                 if r.fields_removed:
                     print(f"        removed: {', '.join(r.fields_removed)}")
 

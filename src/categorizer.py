@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 import anthropic
 
@@ -13,56 +14,73 @@ _FALLBACK_CATEGORY = Category(
     slug="general", display_name="General", sub_category="Uncategorized"
 )
 
-TAXONOMY: dict[str, list[str]] = {
-    "AI Coding": ["Coding Workflows", "Prompt & Context Engineering"],
-    "Agent Architectures": ["Applied Agents", "Frameworks & Patterns"],
-    "Agent Reliability": ["Evals & Observability"],
-    "Context Engineering": ["RAG & Context", "Agent Memory"],
-    "Model Systems": ["Inference & Serving", "Model Releases"],
-    "AI Knowledge Systems": ["Obsidian & PKM"],
-    "ML Research": ["Research Digest", "Applied ML"],
-    "AI Product & Strategy": ["Monetization & GTM"],
-    "AI Productivity": ["Workflows & Execution"],
-    "AI Career & Mindset": ["Performance & Habits"],
-}
+_FRONTMATTER_CATEGORY_RE = re.compile(r'^category:\s*"(.+)"', re.MULTILINE)
+_FRONTMATTER_SUBCATEGORY_RE = re.compile(r'^subCategory:\s*"(.+)"', re.MULTILINE)
 
 
-def _build_taxonomy_block() -> str:
-    """Format the taxonomy as a readable block for the system prompt."""
+def read_existing_taxonomy(output_dir: Path) -> dict[str, set[str]]:
+    """Scan *.md frontmatter for existing category/subCategory values."""
+    taxonomy: dict[str, set[str]] = {}
+    if not output_dir.exists():
+        return taxonomy
+    for md_file in output_dir.glob("*.md"):
+        if md_file.name == "index.md":
+            continue
+        content = md_file.read_text()
+        cat_match = _FRONTMATTER_CATEGORY_RE.search(content)
+        sub_match = _FRONTMATTER_SUBCATEGORY_RE.search(content)
+        if cat_match and sub_match:
+            cat = cat_match.group(1)
+            sub = sub_match.group(1)
+            taxonomy.setdefault(cat, set()).add(sub)
+    return taxonomy
+
+
+def _build_taxonomy_block(taxonomy: dict[str, set[str]]) -> str:
     lines: list[str] = []
-    for category, subs in TAXONOMY.items():
+    for category, subs in sorted(taxonomy.items()):
         lines.append(f"- {category}")
-        for sub in subs:
+        for sub in sorted(subs):
             lines.append(f"  - {sub}")
     return "\n".join(lines)
 
 
-SYSTEM_PROMPT = f"""\
-You are a bookmark categorizer. Given a JSON array of tweets (bookmarks), \
-assign each one to exactly one category and sub_category from the fixed taxonomy below, \
-and generate a concise, descriptive title for each bookmark.
+def _build_system_prompt(taxonomy: dict[str, set[str]]) -> str:
+    """Build the categorization system prompt from the current vault taxonomy."""
+    if taxonomy:
+        taxonomy_section = (
+            f"Existing categories and subcategories in the vault:\n"
+            f"{_build_taxonomy_block(taxonomy)}\n\n"
+            "Rules:\n"
+            "- Prefer the existing categories and subcategories listed above.\n"
+            "- If a tweet fits an existing category but needs a new subcategory, add the new subcategory under that category.\n"
+            "- If no existing category fits, create a new one in Title Case (e.g., \"AI Ethics\") with a concise subcategory (e.g., \"Bias & Fairness\").\n"
+            "- New names must be 2-4 words, Title Case, and must not duplicate or overlap existing ones.\n"
+            "- Do NOT use \"General\" or \"Uncategorized\" — every tweet deserves a meaningful category."
+        )
+    else:
+        taxonomy_section = (
+            "No existing categories yet — this is the first run.\n\n"
+            "Rules:\n"
+            "- Create meaningful categories in Title Case (e.g., \"AI Coding\", \"Agent Architectures\").\n"
+            "- Each category must have exactly one subcategory per tweet, also in Title Case.\n"
+            "- Keep names concise (2-4 words). Group related content under the same category.\n"
+            "- Do NOT use \"General\" or \"Uncategorized\" — every tweet deserves a meaningful category."
+        )
 
-Allowed categories and subcategories:
-{_build_taxonomy_block()}
-
-Rules:
-- You MUST pick from the categories and subcategories listed above whenever possible.
-- If a tweet does not clearly fit any category, use category "General" with sub_category "Uncategorized".
-- If a tweet genuinely cannot fit any existing category and "General" would lose important signal, \
-you MAY create a new category. When doing so:
-  - Use Title Case for the category name (e.g., "AI Ethics")
-  - Provide exactly one sub_category in Title Case (e.g., "Bias & Fairness")
-  - Keep names concise (2-4 words)
-  - Do NOT duplicate or overlap with existing categories
-- Generate a title (max 80 chars) for each bookmark:
-  - For articles: prefer the article's actual title or topic
-  - For posts: summarize the key insight or topic (do not just truncate the tweet)
-  - Title must be YAML-safe: no colons, no quotes, no newlines, no brackets
-- Return ONLY a JSON array, no other text.
-
-Response format:
-[{{"tweet_id": "...", "category": "AI Coding", "sub_category": "Coding Workflows", "title": "LangGraph Agent Memory Patterns"}}, ...]
-"""
+    return (
+        "You are a bookmark categorizer. Given a JSON array of tweets (bookmarks), "
+        "assign each one to exactly one category and sub_category, and generate a concise, descriptive title.\n\n"
+        f"{taxonomy_section}\n\n"
+        "Title rules:\n"
+        "- Generate a title (max 80 chars) for each bookmark.\n"
+        "- For articles: prefer the article's actual title or topic.\n"
+        "- For posts: summarize the key insight or topic (do not just truncate the tweet).\n"
+        "- Title must be YAML-safe: no colons, no quotes, no newlines, no brackets.\n\n"
+        "Return ONLY a JSON array, no other text.\n\n"
+        "Response format:\n"
+        '[{"tweet_id": "...", "category": "AI Coding", "sub_category": "Coding Workflows", "title": "LangGraph Agent Memory Patterns"}, ...]'
+    )
 
 
 def _slugify(display_name: str) -> str:
@@ -119,16 +137,19 @@ def parse_categorization_response(text: str) -> dict[str, tuple[Category, str]]:
 def categorize_tweets(
     tweets: tuple[Tweet, ...],
     api_key: str,
+    output_dir: Path | None = None,
 ) -> tuple[tuple[CategorizedTweet, ...], dict]:
     """Categorize tweets using Claude in a single API call."""
-    client = anthropic.Anthropic(api_key=api_key)
+    taxonomy = read_existing_taxonomy(output_dir) if output_dir is not None else {}
+    system_prompt = _build_system_prompt(taxonomy)
 
+    client = anthropic.Anthropic(api_key=api_key)
     payload = build_prompt_payload(tweets)
 
     response = client.messages.create(
         model=_MODEL,
         max_tokens=_MAX_TOKENS,
-        system=SYSTEM_PROMPT,
+        system=system_prompt,
         messages=[{"role": "user", "content": payload}],
     )
 

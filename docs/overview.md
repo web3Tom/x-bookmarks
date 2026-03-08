@@ -44,8 +44,8 @@ Run via: `uv run x-bookmarks-auth`
 ### 2. Configuration (`src/config.py`)
 
 - Loads credentials and settings from `.env` using `python-dotenv`
-- Frozen dataclass (`Config`) with fields: `client_id`, `client_secret`, `access_token`, `refresh_token`, `user_id`, `anthropic_api_key`, `output_dir`
-- Validates that all required variables are present; raises `ValueError` on missing keys
+- Frozen dataclass (`Config`) with fields: `client_id`, `client_secret` (optional), `access_token`, `refresh_token`, `user_id`, `anthropic_api_key`, `output_dir`
+- Validates that all required variables are present (`CLIENT_SECRET` is optional); raises `ValueError` on missing keys
 - `output_dir` resolves from `KNOWLEDGE_BASE_DIR` env var (default: `~/Documents/projects/workspace/knowledge`) + `03_AI/x/x-posts`
 
 ### 3. Bookmark Fetching (`src/api_client.py`)
@@ -145,11 +145,46 @@ article_url: "https://..." # only for articles
 The `main()` function chains the pipeline sequentially:
 
 1. `load_config()` — exits on error
-2. `fetch_bookmarks()` — paginated API calls
-3. Print article summary (count of articles vs. posts)
-4. `categorize_tweets()` — single Claude batch call
-5. `write_bookmarks()` — file generation + deduplication
-6. Print run summary including Claude token usage
+2. Generate `run_id` (12-char UUID hex) used in all console output for the session
+3. `fetch_bookmarks()` — paginated API calls
+4. **Early deduplication** — `read_existing_ids()` is called here (before Claude) to filter out already-saved tweets; only `novel` tweets proceed
+5. Print article summary (count of articles with/without API content, from novel set only)
+6. `categorize_tweets(novel, ...)` — single Claude batch call on novel tweets only
+7. `write_bookmarks()` — file generation + write-time deduplication guard
+8. Print run summary (fetched / skipped / new / files written / token usage / duration / category breakdown)
+9. Append structured JSON run record to `.x-bookmarks-history.jsonl` in `output_dir`
+
+Run via: `uv run x-bookmarks`
+
+### 8. Run History (`src/main.py` — `_append_history`)
+
+Every run appends one JSON line to `{output_dir}/.x-bookmarks-history.jsonl`:
+
+```json
+{
+  "run_id": "abc123def456",
+  "status": "success|empty|noop",
+  "started_at": "2026-02-23T12:00:00+00:00",
+  "duration_ms": 4200,
+  "output_dir": "/path/to/x-posts",
+  "bookmarks": {
+    "fetched": 50,
+    "skipped_existing": 30,
+    "novel": 20,
+    "articles": 3
+  },
+  "output": {
+    "files_written": 20,
+    "duplicates_skipped": 0,
+    "filenames": ["2026-02-23-handle.md", "..."],
+    "index_updated": true
+  },
+  "token_usage": { "input_tokens": 12000, "output_tokens": 800 },
+  "categories": { "AI Coding": 8, "Agent Architectures": 5 }
+}
+```
+
+Statuses: `success` (files written), `noop` (all already saved), `empty` (API returned nothing).
 
 Run via: `uv run x-bookmarks`
 

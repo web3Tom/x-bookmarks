@@ -15,8 +15,10 @@ Primary goals:
 
 ## File Naming
 
-- Notes should use: `YYYY-MM-DD-handle.md`
-- Example: `2026-02-23-theo.md`
+- Notes use a kebab-case slug of the LLM-generated title: `{title-slug}.md`
+- Example: `mastering-prompt-engineering-fundamentals.md`
+- Slugs are lowercase, max 80 chars, special chars removed, spaces/underscores become hyphens.
+- Collisions get a `-2`, `-3` suffix.
 - Keep one note per source post/article.
 
 ## Required Frontmatter Schema
@@ -25,41 +27,34 @@ Use this exact key set and casing:
 
 ```yaml
 ---
-title: '...'
-author: '@handle'
-author_name: 'Display Name'
-category: '...'
-subCategory: '...'
+title: "..."
+author: "@handle"
+category: "..."
+subCategory: "..."
 date: 2026-02-25
 read: false
-type: 'post' # or "article"
-tweet_id: '...'
-tweet_url: 'https://x.com/...'
-article_url: 'https://...' # optional
-likes: 0
-retweets: 0
-replies: 0
-bookmarks: 0
-has_media: false
-has_links: false
+type: "post" # or "article"
+tweet_url: "https://x.com/..."
+article_url: "https://..." # optional — articles only
 ---
 ```
 
 Rules:
 
-- `subCategory` must be camelCase (not `sub-category`).
+- All string fields must be double-quoted.
+- `subCategory` is camelCase (not `sub-category`).
 - `title` must be human-readable, not truncated (`...`), and no raw URLs.
-- Keep booleans unquoted (`true`/`false`), numbers unquoted.
-- Unknown frontmatter keys should be removed unless explicitly required.
+- `read` is an unquoted boolean (`true`/`false`).
+- Deprecated fields (`author_name`, `tweet_id`, `likes`, `retweets`, `replies`, `bookmarks`, `has_media`, `has_links`) must not appear — run `x-bookmarks-migrate` to remove them.
 
 ## Body Structure
 
 Preferred structure:
 
 ```md
-## Notes
+## {title}
 
-<cleaned content>
+<cleaned content — blockquoted tweet text for posts, article body for articles>
 
 ## References
 
@@ -69,47 +64,23 @@ Preferred structure:
 
 Rules:
 
-- Keep `## Notes` as the main content section.
+- The first `##` heading must match the frontmatter `title` exactly.
 - Use `## References` for links.
-- Promote clear article markers (`TL;DR`, `Part`, `Section`) to headings when helpful.
+- Post content is blockquoted (`> text`); article content is verbatim.
 - Avoid giant unbroken text blocks when possible.
 
 ## Taxonomy Policy
 
-Top-level `category` should be specific AI subject depth, not generic "AI Engineering".
+Categories and subcategories are **dynamic** — they grow from the vault itself. The `x-bookmarks` pipeline reads all existing `category`/`subCategory` values from frontmatter at runtime and passes them to Claude as the preferred list.
 
-Current allowed categories/subcategories:
+Rules:
 
-- `AI Coding`
-  - `Coding Workflows`
-  - `Prompt & Context Engineering`
-- `Agent Architectures`
-  - `Applied Agents`
-  - `Frameworks & Patterns`
-- `Agent Reliability`
-  - `Evals & Observability`
-- `Context Engineering`
-  - `RAG & Context`
-  - `Agent Memory`
-- `Model Systems`
-  - `Inference & Serving`
-  - `Model Releases`
-- `AI Knowledge Systems`
-  - `Obsidian & PKM`
-- `ML Research`
-  - `Research Digest`
-  - `Applied ML`
-- `AI Product & Strategy`
-  - `Monetization & GTM`
-- `AI Productivity`
-  - `Workflows & Execution`
-- `AI Career & Mindset`
-  - `Performance & Habits`
+- **Prefer existing** categories and subcategories whenever a tweet fits one.
+- **Extend** a category with a new subcategory when the category fits but no subcategory does.
+- **Create** a new category + subcategory (both Title Case, 2-4 words) only when no existing category fits.
+- **Never** use `"General"` or `"Uncategorized"` — every bookmark deserves a meaningful label.
 
-Guidance:
-
-- Choose category from core technical subject first.
-- Use business/career categories only when content is clearly non-technical.
+Category names should reflect specific AI subject depth (e.g., `Agent Architectures`, `Context Engineering`), not generic buckets (e.g., `AI Engineering`, `Miscellaneous`).
 
 ## index.md Contract
 

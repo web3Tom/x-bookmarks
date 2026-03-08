@@ -10,6 +10,7 @@ from src.migrate import (
     ParsedBookmark,
     _build_migrated_frontmatter,
     _build_migration_payload,
+    _build_rename_filename,
     _parse_migration_response,
     _replace_body_heading,
     _split_frontmatter_body,
@@ -19,6 +20,7 @@ from src.migrate import (
     migrate_single_file,
     parse_existing_bookmark,
 )
+from src.markdown_writer import _slugify_title
 
 
 # --- Fixtures ---
@@ -360,7 +362,7 @@ class TestReplaceBodyHeading:
 # --- TestMigrateSingleFile ---
 
 class TestMigrateSingleFile:
-    def test_file_rewritten_correctly(self, old_bookmark_file: Path):
+    def test_file_rewritten_and_renamed(self, old_bookmark_file: Path):
         bm = parse_existing_bookmark(old_bookmark_file)
         title_data = {
             "title": "Mastering Prompt Engineering Fundamentals",
@@ -372,13 +374,19 @@ class TestMigrateSingleFile:
         assert not result.skipped
         assert result.old_title == "How to master prompt engineering"
         assert result.new_title == "Mastering Prompt Engineering Fundamentals"
+        assert result.old_filename == "2026-01-15-EXM7777.md"
+        assert result.new_filename == "mastering-prompt-engineering-fundamentals.md"
         assert "author_name" in result.fields_removed
         assert "tweet_id" in result.fields_removed
         assert "likes" in result.fields_removed
         assert result.heading_changed
 
-        # Verify the written file
-        content = old_bookmark_file.read_text()
+        # Old file should be gone, new file should exist
+        assert not old_bookmark_file.exists()
+        new_path = old_bookmark_file.parent / "mastering-prompt-engineering-fundamentals.md"
+        assert new_path.exists()
+
+        content = new_path.read_text()
         assert 'title: "Mastering Prompt Engineering Fundamentals"' in content
         assert "author_name" not in content
         assert "tweet_id:" not in content
@@ -397,7 +405,7 @@ class TestMigrateSingleFile:
         result = migrate_single_file(bm, title_data)
 
         assert isinstance(result, MigrationResult)
-        assert result.filepath == old_bookmark_file
+        assert result.new_filename == "new-title.md"
         assert isinstance(result.fields_removed, tuple)
         assert isinstance(result.heading_changed, bool)
         assert not result.skipped
@@ -407,6 +415,26 @@ class TestMigrateSingleFile:
         title_data = {"title": "", "category": "AI Coding", "sub_category": "Coding Workflows"}
         result = migrate_single_file(bm, title_data)
         assert result.new_title != ""
+
+    def test_collision_suffix(self, tmp_path: Path):
+        """Two files with same title get -2 suffix."""
+        for name in ("a.md", "b.md"):
+            (tmp_path / name).write_text(
+                '---\ntitle: "Same Title"\nauthor: "@user"\n'
+                'date: 2026-01-01\ntype: "post"\n'
+                'tweet_url: "https://x.com/user/status/1"\n---\n\n## Notes\n\nBody.\n'
+            )
+        bm_a = parse_existing_bookmark(tmp_path / "a.md")
+        bm_b = parse_existing_bookmark(tmp_path / "b.md")
+        existing: set[str] = {"index.md"}
+
+        r1 = migrate_single_file(bm_a, {"title": "Same Title", "category": "AI", "sub_category": "X"}, existing)
+        existing.add(r1.new_filename)
+
+        r2 = migrate_single_file(bm_b, {"title": "Same Title", "category": "AI", "sub_category": "X"}, existing)
+
+        assert r1.new_filename == "same-title.md"
+        assert r2.new_filename == "same-title-2.md"
 
 
 # --- TestMigrateDirectory ---
@@ -419,7 +447,7 @@ class TestMigrateDirectory:
             "2026-01-16-bob.md": {"title": "Bob Title", "category": "Agent Architectures", "sub_category": "Applied Agents"},
         }
         results = migrate_directory(old_bookmark_dir, api_key="test-key")
-        filenames = [r.filepath.name for r in results]
+        filenames = [r.old_filename for r in results]
         assert "index.md" not in filenames
 
     @patch("src.migrate.generate_titles_batch")
@@ -433,6 +461,21 @@ class TestMigrateDirectory:
         assert len(migrated) == 2
 
     @patch("src.migrate.generate_titles_batch")
+    def test_files_renamed_to_title_slug(self, mock_gen: MagicMock, old_bookmark_dir: Path):
+        mock_gen.return_value = {
+            "2026-01-15-alice.md": {"title": "Alice Title", "category": "AI Coding", "sub_category": "Coding Workflows"},
+            "2026-01-16-bob.md": {"title": "Bob Title", "category": "Agent Architectures", "sub_category": "Applied Agents"},
+        }
+        results = migrate_directory(old_bookmark_dir, api_key="test-key")
+
+        new_filenames = {r.new_filename for r in results if not r.skipped}
+        assert new_filenames == {"alice-title.md", "bob-title.md"}
+        assert (old_bookmark_dir / "alice-title.md").exists()
+        assert (old_bookmark_dir / "bob-title.md").exists()
+        assert not (old_bookmark_dir / "2026-01-15-alice.md").exists()
+        assert not (old_bookmark_dir / "2026-01-16-bob.md").exists()
+
+    @patch("src.migrate.generate_titles_batch")
     def test_dry_run_doesnt_write(self, mock_gen: MagicMock, old_bookmark_dir: Path):
         original_alice = (old_bookmark_dir / "2026-01-15-alice.md").read_text()
         original_bob = (old_bookmark_dir / "2026-01-16-bob.md").read_text()
@@ -443,8 +486,10 @@ class TestMigrateDirectory:
         }
         results = migrate_directory(old_bookmark_dir, api_key="test-key", dry_run=True)
         assert len(results) == 2
+        assert results[0].new_filename == "alice-title.md"
+        assert results[1].new_filename == "bob-title.md"
 
-        # Files should be unchanged
+        # Files should be unchanged (not renamed or rewritten)
         assert (old_bookmark_dir / "2026-01-15-alice.md").read_text() == original_alice
         assert (old_bookmark_dir / "2026-01-16-bob.md").read_text() == original_bob
 
@@ -456,7 +501,7 @@ class TestMigrateDirectory:
         }
         migrate_directory(old_bookmark_dir, api_key="test-key")
 
-        content = (old_bookmark_dir / "2026-01-16-bob.md").read_text()
+        content = (old_bookmark_dir / "bob-title.md").read_text()
         assert "read: true" in content
 
     def test_empty_directory(self, tmp_path: Path):
@@ -573,3 +618,43 @@ class TestParseResponse:
         result = _parse_migration_response(text)
         assert "b.md" in result
         assert result["b.md"]["title"] == "Title B"
+
+
+# --- TestSlugifyTitle ---
+
+class TestSlugifyTitle:
+    def test_basic_title(self):
+        assert _slugify_title("Mastering Prompt Engineering") == "mastering-prompt-engineering"
+
+    def test_special_characters_removed(self):
+        assert _slugify_title("What's Next: AI & ML?") == "whats-next-ai-ml"
+
+    def test_multiple_spaces_collapsed(self):
+        assert _slugify_title("Too   Many    Spaces") == "too-many-spaces"
+
+    def test_long_title_truncated(self):
+        long_title = "A " * 100
+        result = _slugify_title(long_title)
+        assert len(result) <= 80
+
+    def test_empty_title_fallback(self):
+        assert _slugify_title("") == "untitled"
+        assert _slugify_title("!!!") == "untitled"
+
+    def test_preserves_hyphens(self):
+        assert _slugify_title("AI-Powered Tools") == "ai-powered-tools"
+
+
+# --- TestBuildRenameFilename ---
+
+class TestBuildRenameFilename:
+    def test_no_collision(self):
+        assert _build_rename_filename("My Title", set()) == "my-title.md"
+
+    def test_collision_suffix(self):
+        existing = {"my-title.md"}
+        assert _build_rename_filename("My Title", existing) == "my-title-2.md"
+
+    def test_multiple_collisions(self):
+        existing = {"my-title.md", "my-title-2.md"}
+        assert _build_rename_filename("My Title", existing) == "my-title-3.md"

@@ -8,6 +8,7 @@ from src.markdown_writer import (
     _build_filename,
     _build_frontmatter,
     _escape_yaml_string,
+    _slugify_title,
     _validate_frontmatter,
     _format_post_body,
     _format_article_body,
@@ -73,34 +74,52 @@ def _make_category(
     return Category(slug=slug, display_name=display_name, sub_category=sub_category)
 
 
+class TestSlugifyTitle:
+    def test_basic_title(self):
+        assert _slugify_title("Hello World") == "hello-world"
+
+    def test_special_chars_removed(self):
+        assert _slugify_title("What's Next?") == "whats-next"
+
+    def test_underscores_become_hyphens(self):
+        assert _slugify_title("hello_world") == "hello-world"
+
+    def test_empty_string(self):
+        assert _slugify_title("") == "untitled"
+
+    def test_only_special_chars(self):
+        assert _slugify_title("@#$%") == "untitled"
+
+    def test_truncation_at_80(self):
+        long = "word " * 30
+        result = _slugify_title(long)
+        assert len(result) <= 80
+
+    def test_no_trailing_hyphens_after_truncation(self):
+        # Title that would end with a hyphen when truncated
+        long = "a-" * 50
+        result = _slugify_title(long)
+        assert not result.endswith("-")
+
+
 class TestBuildFilename:
     def test_basic_naming(self):
-        tweet = _make_tweet(username="alice", created_at=datetime(2026, 2, 24))
-        result = _build_filename(tweet, set())
-        assert result == "2026-02-24-alice.md"
-
-    def test_unknown_author(self):
-        tweet = Tweet(
-            id="1", text="Hello", author_id="10",
-            created_at=datetime(2026, 2, 24),
-            author=None,
-            public_metrics={}, media=(), external_links=(),
-            note_tweet_text=None, article_url=None,
-        )
-        result = _build_filename(tweet, set())
-        assert result == "2026-02-24-unknown.md"
+        result = _build_filename("Hello World", set())
+        assert result == "hello-world.md"
 
     def test_collision_adds_suffix(self):
-        tweet = _make_tweet(username="alice", created_at=datetime(2026, 2, 24))
-        existing = {"2026-02-24-alice.md"}
-        result = _build_filename(tweet, existing)
-        assert result == "2026-02-24-alice-2.md"
+        existing = {"hello-world.md"}
+        result = _build_filename("Hello World", existing)
+        assert result == "hello-world-2.md"
 
     def test_multiple_collisions(self):
-        tweet = _make_tweet(username="alice", created_at=datetime(2026, 2, 24))
-        existing = {"2026-02-24-alice.md", "2026-02-24-alice-2.md"}
-        result = _build_filename(tweet, existing)
-        assert result == "2026-02-24-alice-3.md"
+        existing = {"hello-world.md", "hello-world-2.md"}
+        result = _build_filename("Hello World", existing)
+        assert result == "hello-world-3.md"
+
+    def test_empty_title_uses_untitled(self):
+        result = _build_filename("", set())
+        assert result == "untitled.md"
 
 
 class TestEscapeYamlString:
@@ -381,9 +400,8 @@ class TestWriteBookmarks:
         ct = CategorizedTweet(tweet=tweet, category=cat, title="Hello world")
         stats = write_bookmarks((ct,), tmp_output_dir)
 
-        files = list(tmp_output_dir.glob("2026-02-24-alice.md"))
-        assert len(files) == 1
-        content = files[0].read_text()
+        assert (tmp_output_dir / "hello-world.md").exists()
+        content = (tmp_output_dir / "hello-world.md").read_text()
         assert 'type: "post"' in content
         assert "## Hello world" in content
         assert "> Hello world" in content
@@ -400,9 +418,8 @@ class TestWriteBookmarks:
         ct = CategorizedTweet(tweet=tweet, category=cat, title="Great Article")
         stats = write_bookmarks((ct,), tmp_output_dir)
 
-        files = list(tmp_output_dir.glob("2026-02-24-bob.md"))
-        assert len(files) == 1
-        content = files[0].read_text()
+        assert (tmp_output_dir / "great-article.md").exists()
+        content = (tmp_output_dir / "great-article.md").read_text()
         assert 'type: "article"' in content
         assert "## Great Article" in content
         assert "# Great Article" in content
@@ -422,14 +439,14 @@ class TestWriteBookmarks:
 
     def test_collisions_get_suffix(self, tmp_output_dir):
         cat = _make_category()
-        tweet1 = _make_tweet(id="1", username="alice", text="First tweet")
-        tweet2 = _make_tweet(id="2", username="alice", text="Second tweet")
-        ct1 = CategorizedTweet(tweet=tweet1, category=cat, title="First tweet")
-        ct2 = CategorizedTweet(tweet=tweet2, category=cat, title="Second tweet")
+        tweet1 = _make_tweet(id="1", username="alice", text="Same title")
+        tweet2 = _make_tweet(id="2", username="alice", text="Same title")
+        ct1 = CategorizedTweet(tweet=tweet1, category=cat, title="Same title")
+        ct2 = CategorizedTweet(tweet=tweet2, category=cat, title="Same title")
         stats = write_bookmarks((ct1, ct2), tmp_output_dir)
 
-        assert (tmp_output_dir / "2026-02-24-alice.md").exists()
-        assert (tmp_output_dir / "2026-02-24-alice-2.md").exists()
+        assert (tmp_output_dir / "same-title.md").exists()
+        assert (tmp_output_dir / "same-title-2.md").exists()
         assert stats["bookmarks_written"] == 2
 
     def test_index_creation(self, tmp_output_dir):

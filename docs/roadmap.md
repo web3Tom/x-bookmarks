@@ -21,7 +21,7 @@
 ### v1.2 — Taxonomy Alignment
 - [x] **Align taxonomy with AGENTS.md** — enforce the fixed 10-category AI taxonomy in the Claude system prompt instead of free-form categorization
 - [x] **subCategory frontmatter field** — added `subCategory` (camelCase) to frontmatter for finer-grained Dataview queries
-- [x] **Body structure alignment** — restructured note body to `## Notes` / `## References` sections per AGENTS.md spec
+- [x] **Body structure alignment** — restructured note body to `## {title}` / `## References` sections (initial v1.2 used `## Notes`; subsequently replaced with `## {title}` for descriptive headings; `migrate.py` exists to backfill old files)
 - [x] **Dataview index update** — added `subCategory` column, updated `SORT` to `category ASC, subCategory ASC, date DESC`
 
 ## Planned

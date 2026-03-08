@@ -26,11 +26,21 @@ def read_existing_ids(output_dir: Path) -> set[str]:
     return all_ids
 
 
-def _build_filename(tweet: Tweet, existing_names: set[str]) -> str:
-    """{date}-{username}.md with -2, -3 collision suffix."""
-    date_str = tweet.created_at.strftime("%Y-%m-%d")
-    username = tweet.author.username if tweet.author else "unknown"
-    base = f"{date_str}-{username}"
+def _slugify_title(title: str) -> str:
+    """Convert a title string to a kebab-case filename slug."""
+    slug = title.lower().strip()
+    slug = re.sub(r"[^\w\s-]", "", slug)
+    slug = re.sub(r"[\s_]+", "-", slug)
+    slug = re.sub(r"-{2,}", "-", slug)
+    slug = slug.strip("-")
+    if len(slug) > 80:
+        slug = slug[:80].rstrip("-")
+    return slug or "untitled"
+
+
+def _build_filename(title: str, existing_names: set[str]) -> str:
+    """{title-slug}.md with -2, -3 collision suffix."""
+    base = _slugify_title(title)
     candidate = f"{base}.md"
     if candidate not in existing_names:
         return candidate
@@ -193,7 +203,7 @@ def write_bookmarks(
         is_article = bool(tweet.article_content)
         bookmark_type = "article" if is_article else "post"
 
-        filename = _build_filename(tweet, existing_names)
+        filename = _build_filename(ct.title, existing_names)
         existing_names.add(filename)
 
         frontmatter = _build_frontmatter(tweet, ct.category, bookmark_type, ct.title)

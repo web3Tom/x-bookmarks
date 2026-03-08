@@ -56,19 +56,19 @@ class TestMain:
         categorized = tuple(CategorizedTweet(tweet=t, category=cat, title="Hello") for t in tweets)
         mock_categorize.return_value = (categorized, {"input_tokens": 100, "output_tokens": 50})
 
-        mock_write.return_value = _write_stats(2, filenames=["2025-01-01-test.md", "2025-01-01-test-2.md"])
+        mock_write.return_value = _write_stats(2, filenames=["hello.md", "hello-2.md"])
 
         main()
 
         mock_fetch.assert_called_once_with(config)
-        mock_categorize.assert_called_once_with(tweets, api_key="sk-test")
+        mock_categorize.assert_called_once_with(tweets, api_key="sk-test", output_dir=tmp_path)
         mock_write.assert_called_once_with(categorized, tmp_path)
 
         output = capsys.readouterr().out
         assert "Fetched 2 bookmarks" in output
         assert "New bookmarks:      2" in output
-        assert "+ 2025-01-01-test.md" in output
-        assert "+ 2025-01-01-test-2.md" in output
+        assert "+ hello.md" in output
+        assert "+ hello-2.md" in output
         assert "~ index.md (updated)" in output
 
     @patch("src.main.load_config")
@@ -188,11 +188,11 @@ class TestMain:
         cat = Category(slug="general", display_name="General", sub_category="Uncategorized")
         categorized = (CategorizedTweet(tweet=tweet_new, category=cat, title="Hello"),)
         mock_categorize.return_value = (categorized, {"input_tokens": 50, "output_tokens": 25})
-        mock_write.return_value = _write_stats(1, filenames=["2025-01-01-test.md"])
+        mock_write.return_value = _write_stats(1, filenames=["hello.md"])
 
         main()
 
-        mock_categorize.assert_called_once_with((tweet_new,), api_key="sk-test")
+        mock_categorize.assert_called_once_with((tweet_new,), api_key="sk-test", output_dir=tmp_path)
         output = capsys.readouterr().out
         assert "Skipping 1 already-saved" in output
         assert "Categorizing 1 new bookmark(s)" in output
@@ -275,7 +275,7 @@ class TestRunHistory:
         cat = Category(slug="general", display_name="General", sub_category="Uncategorized")
         categorized = (CategorizedTweet(tweet=tweets[0], category=cat, title="Hello"),)
         mock_categorize.return_value = (categorized, {"input_tokens": 10, "output_tokens": 5})
-        mock_write.return_value = _write_stats(1, filenames=["2025-01-01-test.md"])
+        mock_write.return_value = _write_stats(1, filenames=["hello.md"])
 
         main()
 
@@ -284,7 +284,7 @@ class TestRunHistory:
         assert record["status"] == "success"
         assert record["bookmarks"]["novel"] == 1
         assert record["output"]["files_written"] == 1
-        assert record["output"]["filenames"] == ["2025-01-01-test.md"]
+        assert record["output"]["filenames"] == ["hello.md"]
         assert record["output"]["index_updated"] is True
         assert record["token_usage"] == {"input_tokens": 10, "output_tokens": 5}
         assert "run_id" in record
