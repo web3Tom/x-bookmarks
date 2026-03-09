@@ -4,6 +4,17 @@
 
 `x-bookmarks` is a Python CLI that fetches your `x.com` bookmarks, categorizes them with Claude, and writes them as Obsidian-friendly Markdown notes. The output is designed for a personal knowledge base, especially AI-focused research and workflow capture.
 
+Project URL:
+
+- `https://github.com/web3Tom/x-bookmarks`
+
+## Repository Workflow
+
+- push code and doc changes through `main`
+- track planned work in GitHub Issues
+- use [`docs/roadmap.md`](/home/tom/Documents/projects/workspace/x-bookmarks/docs/roadmap.md) for higher-level planning
+- use [`docs/github-issues.md`](/home/tom/Documents/projects/workspace/x-bookmarks/docs/github-issues.md) as the issue-seeding document
+
 ## Output Model
 
 | Setting | Value |

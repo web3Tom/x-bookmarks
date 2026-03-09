@@ -1,28 +1,51 @@
+# Repository Instructions
+
 ## Purpose
 
-This directory stores AI-focused bookmark notes (mostly X posts/articles) in Obsidian Markdown under `x-posts/`.
+This repository contains `x-bookmarks`, a Python CLI that fetches `x.com` bookmarks, categorizes them with Claude, and writes them as Obsidian-friendly Markdown notes.
+
+Public repository URL:
+
+- `https://github.com/web3Tom/x-bookmarks`
 
 Primary goals:
 
-- Keep notes readable and structured.
-- Keep frontmatter consistent for Dataview.
-- Classify content with deep AI subject categories.
+- keep the CLI reliable and easy to set up
+- keep public docs accurate and safe to publish
+- preserve the Markdown/frontmatter contract used by generated notes
+- avoid committing secrets, local caches, or machine-specific artifacts
 
-## Directory Layout
+## Repository Layout
 
-- `x-posts/`: note files.
+- `src/`: application code
+- `tests/`: test suite
+- `docs/`: public project documentation, roadmap, and issue planning
+- `README.md`: public onboarding
+- `.env.example`: safe configuration template
 
-## File Naming
+## Skills To Use
 
-- Notes use a kebab-case slug of the LLM-generated title: `{title-slug}.md`
-- Example: `mastering-prompt-engineering-fundamentals.md`
-- Slugs are lowercase, max 80 chars, special chars removed, spaces/underscores become hyphens.
-- Collisions get a `-2`, `-3` suffix.
-- Keep one note per source post/article.
+When available in this environment:
 
-## Required Frontmatter Schema
+- `obsidian-markdown`
+  - Use for `.md` cleanup, heading normalization, and Markdown structure work.
+- `defuddle`
+  - Use when a roadmap item or feature work involves extracting article content from URLs.
+- `obsidian-cli`
+  - Use only when work explicitly involves Obsidian vault automation or integration testing.
 
-Use this exact key set and casing:
+Use `obsidian-markdown` by default for Markdown files in this repository.
+
+## Configuration And Security Rules
+
+- Never commit `.env`, access tokens, refresh tokens, API keys, or copied terminal output containing secrets.
+- Treat `.env.example` as the only publishable env file.
+- Before finishing, review `git diff --staged` or `git status` for accidental local-only changes.
+- Keep default paths portable; avoid author-specific home-directory assumptions in public docs or code unless clearly justified.
+
+## Generated Markdown Contract
+
+Generated bookmark notes must continue to follow this frontmatter schema:
 
 ```yaml
 ---
@@ -40,63 +63,69 @@ article_url: "https://..." # optional — articles only
 
 Rules:
 
-- All string fields must be double-quoted.
-- `subCategory` is camelCase (not `sub-category`).
-- `title` must be human-readable, not truncated (`...`), and no raw URLs.
-- `read` is an unquoted boolean (`true`/`false`).
-- Deprecated fields (`author_name`, `tweet_id`, `likes`, `retweets`, `replies`, `bookmarks`, `has_media`, `has_links`) must not appear — run `x-bookmarks-migrate` to remove them.
+- all string fields must be double-quoted
+- `subCategory` must remain camelCase
+- deprecated fields must not be reintroduced
+- the first `##` heading in generated note bodies must match the frontmatter title exactly
+- use `## References` for outbound links
 
-## Body Structure
+## Documentation Expectations
 
-Preferred structure:
+- Keep [`README.md`](/home/tom/Documents/projects/workspace/x-bookmarks/README.md) aligned with the real setup flow.
+- Keep [`docs/overview.md`](/home/tom/Documents/projects/workspace/x-bookmarks/docs/overview.md) aligned with current architecture and behavior.
+- Keep [`docs/roadmap.md`](/home/tom/Documents/projects/workspace/x-bookmarks/docs/roadmap.md) as the planning source unless replaced intentionally.
+- Keep [`docs/github-issues.md`](/home/tom/Documents/projects/workspace/x-bookmarks/docs/github-issues.md) in sync when roadmap items are re-scoped materially.
 
-```md
-## {title}
+## GitHub Workflow
 
-<cleaned content — blockquoted tweet text for posts, article body for articles>
+Repository:
 
-## References
+- `https://github.com/web3Tom/x-bookmarks`
 
-- 🔗 [Original tweet](...)
-- 🌐 [Article](...)
+### Push Changes
+
+Use this when local changes are ready to publish:
+
+```bash
+git status
+git add .
+git commit -m "<clear summary>"
+git push origin main
 ```
 
-Rules:
+Before pushing:
 
-- The first `##` heading must match the frontmatter `title` exactly.
-- Use `## References` for links.
-- Post content is blockquoted (`> text`); article content is verbatim.
-- Avoid giant unbroken text blocks when possible.
+- verify no secrets are staged
+- verify tests pass
+- verify generated docs still reflect the current implementation
 
-## Taxonomy Policy
+### Create Issues
 
-Categories and subcategories are **dynamic** — they grow from the vault itself. The `x-bookmarks` pipeline reads all existing `category`/`subCategory` values from frontmatter at runtime and passes them to Claude as the preferred list.
+Canonical source for issue creation:
 
-Rules:
+- [`docs/github-issues.md`](/home/tom/Documents/projects/workspace/x-bookmarks/docs/github-issues.md)
+- [`docs/roadmap.md`](/home/tom/Documents/projects/workspace/x-bookmarks/docs/roadmap.md)
 
-- **Prefer existing** categories and subcategories whenever a tweet fits one.
-- **Extend** a category with a new subcategory when the category fits but no subcategory does.
-- **Create** a new category + subcategory (both Title Case, 2-4 words) only when no existing category fits.
-- **Never** use `"General"` or `"Uncategorized"` — every bookmark deserves a meaningful label.
+If GitHub API workflow is available:
 
-Category names should reflect specific AI subject depth (e.g., `Agent Architectures`, `Context Engineering`), not generic buckets (e.g., `AI Engineering`, `Miscellaneous`).
+- create issues from `docs/github-issues.md`
+- avoid duplicating existing issue titles
+- preserve the issue title and body structure unless there is a clear repo-specific reason to change it
 
-## Skills to Use
+### Pull Down Issues
 
-When available in this environment:
+If a local issue-sync workflow is established later, use it to refresh planning docs from GitHub before editing roadmap-derived work. Until then:
 
-- `obsidian-markdown`:
-  - Any `.md` cleanup, frontmatter normalization, wikilinks/callouts, heading cleanup.
-- `defuddle`:
-  - When ingesting/cleaning content from URLs before summarizing into notes.
-- `obsidian-cli`:
-  - Vault operations, note search, and Obsidian automation tasks.
+- treat GitHub Issues as the live execution backlog
+- treat `docs/roadmap.md` as the higher-level planning document
+- manually reconcile issue status back into docs when major planning changes are made
 
-Use `obsidian-markdown` by default for this directory.
+## Validation Checklist
 
-## Validation Checklist (Before Finishing)
+Before finishing:
 
-- No note in `x-posts/` is missing `category` or `subCategory`.
-- No note uses `sub-category`.
-- No malformed frontmatter keys.
-- No broken/truncated title placeholders.
+- no secrets or local-only files are staged
+- tests pass for code changes
+- docs reflect the current behavior
+- no stale personal paths or private URLs were introduced
+- generated note schema expectations remain intact

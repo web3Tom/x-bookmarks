@@ -64,6 +64,10 @@
 
 ## GitHub Push Workflow
 
+Repository URL:
+
+- `https://github.com/web3Tom/x-bookmarks`
+
 1. Create the target GitHub repository.
 2. Set the remote:
 
@@ -90,6 +94,23 @@ git commit -m "Prepare x-bookmarks for public release"
 ```bash
 git push -u origin main
 ```
+
+## GitHub Issue Workflow
+
+Push issue-planning changes like any other doc update:
+
+```bash
+git add docs/roadmap.md docs/github-issues.md
+git commit -m "Update roadmap and issue planning"
+git push origin main
+```
+
+If working from GitHub Issues back into docs:
+
+1. Review open and closed issues in the GitHub UI.
+2. Reconcile any major scope changes into `docs/roadmap.md`.
+3. Update `docs/github-issues.md` if new roadmap items should be seeded later.
+4. Commit and push the doc updates.
 
 ## Assumptions
 

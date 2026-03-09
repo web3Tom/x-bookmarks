@@ -2,6 +2,8 @@
 
 Fetch your `x.com` bookmarks through the X API, classify them with Claude, and save them as structured Obsidian Markdown notes.
 
+Project URL: `https://github.com/web3Tom/x-bookmarks`
+
 ## Who This Is For
 
 This project is for developers who want to turn saved X posts and articles into a categorized knowledge base. To use it, you need:
@@ -118,6 +120,7 @@ uv run pytest --cov=src --cov-report=term-missing
 - [`docs/public-release-audit.md`](docs/public-release-audit.md)
 - [`docs/public-release-plan.md`](docs/public-release-plan.md)
 - [`docs/github-issues.md`](docs/github-issues.md)
+- [`AGENTS.md`](AGENTS.md)
 
 ## Security Notes
 
