@@ -1,8 +1,18 @@
-# X Bookmarks to Obsidian
+# x-bookmarks
 
-Fetch all your X (Twitter) bookmarks via API v2, categorize them with Claude, and write categorized Markdown files into an Obsidian vault.
+Fetch your `x.com` bookmarks through the X API, classify them with Claude, and save them as structured Obsidian Markdown notes.
 
-## Setup
+## Who This Is For
+
+This project is for developers who want to turn saved X posts and articles into a categorized knowledge base. To use it, you need:
+
+- an X developer app/project with bookmark access
+- Python 3.11+
+- `uv`
+- an Anthropic API key
+- an Obsidian vault or another target directory for the generated notes
+
+## Quick Start
 
 ### 1. Install dependencies
 
@@ -10,72 +20,107 @@ Fetch all your X (Twitter) bookmarks via API v2, categorize them with Claude, an
 uv sync
 ```
 
-### 2. Authenticate with X
+### 2. Create your local environment file
+
+```bash
+cp .env.example .env
+```
+
+Add your `CLIENT_ID` first. The OAuth helper will fill in the access token, refresh token, and user ID.
+
+### 3. Authenticate with X
 
 ```bash
 uv run x-bookmarks-auth
 ```
 
-This opens your browser for OAuth 2.0 PKCE authorization and saves tokens to `.env`.
+This opens a browser for OAuth 2.0 PKCE authorization and writes the returned credentials to `.env`.
 
-### 3. Add your Anthropic API key
+### 4. Add your Anthropic API key
 
-Edit `.env` and set `ANTHROPIC_API_KEY`:
-
-```
+```dotenv
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-### 4. Run
+### 5. Set your output location
+
+Set `KNOWLEDGE_BASE_DIR` in `.env` if you want to override the default output root.
+
+Generated notes are written under:
+
+```text
+${KNOWLEDGE_BASE_DIR}/03_AI/x/x-posts/
+```
+
+If `KNOWLEDGE_BASE_DIR` is unset, the tool defaults to `~/x-bookmarks-data`.
+
+### 6. Run the pipeline
 
 ```bash
 uv run x-bookmarks
 ```
 
-Bookmarks are written to `~/Documents/projects/workspace/knowledge/03_AI/x/x-posts/` as categorized Markdown files (override with `KNOWLEDGE_BASE_DIR` env var).
-
 ## Features
 
-- Fetches up to 800 bookmarks with automatic pagination
-- Automatic OAuth token refresh on expiry
-- Single-batch categorization via Claude (claude-sonnet-4-6)
-- LLM-generated titles and title-based filenames (`{title-slug}.md`)
-- Deduplication: re-running skips already-saved bookmarks
-- Obsidian-compatible frontmatter with Dataview support
-- Supports long-form tweets (note_tweet) and X Articles
+- Fetches bookmarks from the X API with pagination
+- Refreshes expired access tokens automatically
+- Uses Claude to generate a title plus `category` and `subCategory`
+- Writes Obsidian-friendly Markdown with Dataview-compatible frontmatter
+- Uses title-based filenames such as `{title-slug}.md`
+- Skips bookmarks that were already written
+- Supports long-form posts and X Articles
+- Includes a migration command for older bookmark files
 
 ## Migration
 
-Migrate existing bookmark files to the current schema. This will:
+Use the migration command to normalize older bookmark notes to the current schema.
 
-- Strip deprecated frontmatter fields (`author_name`, `tweet_id`, `likes`, `retweets`, `replies`, `bookmarks`, `has_media`, `has_links`)
-- Generate LLM titles via Claude (replaces raw tweet text titles)
-- Rename files from `{date}-{author}.md` to `{title-slug}.md`
-- Normalize frontmatter quoting and update body headings
+What it does:
 
-### Dry run (preview changes, no files modified)
+- removes deprecated frontmatter fields
+- replaces raw-text titles with LLM-generated titles
+- renames files from date/author slugs to title slugs
+- normalizes frontmatter quoting and body headings
+
+### Dry run
 
 ```bash
-uv run python -m src.migrate ~/Documents/projects/workspace/knowledge/03_AI/x/x-posts --dry-run --verbose
+uv run x-bookmarks-migrate /path/to/x-posts --dry-run --verbose
 ```
 
 ### Live migration
 
 ```bash
-uv run python -m src.migrate ~/Documents/projects/workspace/knowledge/03_AI/x/x-posts --verbose
+uv run x-bookmarks-migrate /path/to/x-posts --verbose
 ```
 
 ### Options
 
 | Flag | Description |
 |------|-------------|
-| `--dry-run` | Preview changes without writing or renaming files |
-| `--verbose` | Show per-file details (old→new filename, title changes, removed fields) |
-| `--batch-size N` | Files per Claude API call (default: 150) |
-| `--api-key KEY` | Anthropic API key (defaults to `ANTHROPIC_API_KEY` env var) |
+| `--dry-run` | Preview changes without writing files |
+| `--verbose` | Show per-file details |
+| `--batch-size N` | Files per Claude API call |
+| `--api-key KEY` | Anthropic API key override |
 
 ## Development
 
+Run the test suite with coverage:
+
 ```bash
-uv run python -m pytest --cov=src --cov-report=term-missing
+uv run pytest --cov=src --cov-report=term-missing
 ```
+
+## Project Docs
+
+- [`docs/overview.md`](docs/overview.md)
+- [`docs/roadmap.md`](docs/roadmap.md)
+- [`docs/public-release-audit.md`](docs/public-release-audit.md)
+- [`docs/public-release-plan.md`](docs/public-release-plan.md)
+- [`docs/github-issues.md`](docs/github-issues.md)
+
+## Security Notes
+
+- OAuth tokens and your Anthropic API key are stored locally in `.env`.
+- `.env` is ignored by Git, but you should still review `git status` before every push.
+- The repository does not currently encrypt local token storage.

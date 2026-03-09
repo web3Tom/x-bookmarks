@@ -1,16 +1,22 @@
 # Python-generated files
 __pycache__/
+*/__pycache__/
 *.py[oc]
 build/
 dist/
 wheels/
 *.egg-info
+.coverage
+.pytest_cache/
 
 # Virtual environments
-.venv
+.venv/
 
 # Secrets
 .env
+
+# Local agent/tooling state
+.claude/
 
 # IDE
 .idea/
@@ -19,3 +25,4 @@ wheels/
 
 # Logs
 excalidraw.log
+*.log

@@ -42,7 +42,7 @@ def load_config(env_path: Path | None = None) -> Config:
         output_dir=Path(
             os.environ.get(
                 "KNOWLEDGE_BASE_DIR",
-                str(Path.home() / "Documents/projects/workspace/knowledge"),
+                str(Path.home() / "x-bookmarks-data"),
             )
         )
         / "03_AI/x/x-posts",

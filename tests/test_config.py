@@ -53,7 +53,7 @@ class TestConfig:
 
     def test_output_dir_is_correct(self, minimal_env):
         config = load_config(env_path=minimal_env)
-        expected = Path.home() / "Documents/projects/workspace/knowledge/03_AI/x/x-posts"
+        expected = Path.home() / "x-bookmarks-data/03_AI/x/x-posts"
         assert config.output_dir == expected
 
     def test_output_dir_from_env_override(self, minimal_env, monkeypatch):
@@ -105,4 +105,3 @@ class TestConfig:
         monkeypatch.delenv("CLIENT_SECRET", raising=False)
         config = load_config(env_path=env_file)
         assert config.client_secret is None
-
