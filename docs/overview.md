@@ -12,18 +12,18 @@ Project URL:
 
 - push code and doc changes through `main`
 - track planned work in GitHub Issues
-- use [`docs/roadmap.md`](/home/tom/Documents/projects/workspace/x-bookmarks/docs/roadmap.md) for higher-level planning
-- use [`docs/github-issues.md`](/home/tom/Documents/projects/workspace/x-bookmarks/docs/github-issues.md) as the issue-seeding document
+- use [`docs/roadmap.md`](x-bookmarks/docs/roadmap.md) for higher-level planning
+- use [`docs/github-issues.md`](x-bookmarks/docs/github-issues.md) as the issue-seeding document
 
 ## Output Model
 
-| Setting | Value |
-|---------|-------|
-| Default root | `~/x-bookmarks-data` |
-| Output subdirectory | `03_AI/x/x-posts/` |
-| Default final path | `~/x-bookmarks-data/03_AI/x/x-posts/` |
-| Filename format | `{title-slug}.md` |
-| Collision handling | Numeric suffixes such as `-2`, `-3` |
+| Setting             | Value                                 |
+| ------------------- | ------------------------------------- |
+| Default root        | `~/x-bookmarks-data`                  |
+| Output subdirectory | `03_AI/x/x-posts/`                    |
+| Default final path  | `~/x-bookmarks-data/03_AI/x/x-posts/` |
+| Filename format     | `{title-slug}.md`                     |
+| Collision handling  | Numeric suffixes such as `-2`, `-3`   |
 
 You can override the root with `KNOWLEDGE_BASE_DIR`.
 
@@ -41,19 +41,19 @@ You can override the root with `KNOWLEDGE_BASE_DIR`.
 
 ### Authentication
 
-[`src/auth_helper.py`](/home/tom/Documents/projects/workspace/x-bookmarks/src/auth_helper.py) opens a browser-based OAuth flow, exchanges the code for tokens, fetches the authenticated user ID, and writes credentials to `.env`.
+[`src/auth_helper.py`](x-bookmarks/src/auth_helper.py) opens a browser-based OAuth flow, exchanges the code for tokens, fetches the authenticated user ID, and writes credentials to `.env`.
 
 ### Configuration
 
-[`src/config.py`](/home/tom/Documents/projects/workspace/x-bookmarks/src/config.py) loads `CLIENT_ID`, `ACCESS_TOKEN`, `REFRESH_TOKEN`, `USER_ID`, `ANTHROPIC_API_KEY`, and the optional `KNOWLEDGE_BASE_DIR`.
+[`src/config.py`](x-bookmarks/src/config.py) loads `CLIENT_ID`, `ACCESS_TOKEN`, `REFRESH_TOKEN`, `USER_ID`, `ANTHROPIC_API_KEY`, and the optional `KNOWLEDGE_BASE_DIR`.
 
 ### Bookmark Fetching
 
-[`src/api_client.py`](/home/tom/Documents/projects/workspace/x-bookmarks/src/api_client.py) fetches bookmarks from `GET /2/users/{user_id}/bookmarks`, paginates up to the current cap, and refreshes tokens on `401`.
+[`src/api_client.py`](x-bookmarks/src/api_client.py) fetches bookmarks from `GET /2/users/{user_id}/bookmarks`, paginates up to the current cap, and refreshes tokens on `401`.
 
 ### Categorization
 
-[`src/categorizer.py`](/home/tom/Documents/projects/workspace/x-bookmarks/src/categorizer.py) builds a prompt from the current vault taxonomy when available. The taxonomy is dynamic:
+[`src/categorizer.py`](x-bookmarks/src/categorizer.py) builds a prompt from the current vault taxonomy when available. The taxonomy is dynamic:
 
 - existing `category` and `subCategory` values are preferred
 - new subcategories can be added under existing categories
@@ -64,18 +64,18 @@ If Claude returns no mapping for a tweet, the current code still falls back inte
 
 ### Markdown Output
 
-[`src/markdown_writer.py`](/home/tom/Documents/projects/workspace/x-bookmarks/src/markdown_writer.py) writes notes with the required frontmatter schema and body structure:
+[`src/markdown_writer.py`](x-bookmarks/src/markdown_writer.py) writes notes with the required frontmatter schema and body structure:
 
 ```yaml
 ---
-title: "LangGraph Agent Memory Patterns"
-author: "@handle"
-category: "AI Coding"
-subCategory: "Coding Workflows"
+title: 'LangGraph Agent Memory Patterns'
+author: '@handle'
+category: 'AI Coding'
+subCategory: 'Coding Workflows'
 date: 2026-02-23
 read: false
-type: "post"
-tweet_url: "https://x.com/handle/status/123456789"
+type: 'post'
+tweet_url: 'https://x.com/handle/status/123456789'
 ---
 ```
 
@@ -83,15 +83,15 @@ Posts use blockquoted tweet text. Articles write article content directly. Both 
 
 ### Migration
 
-[`src/migrate.py`](/home/tom/Documents/projects/workspace/x-bookmarks/src/migrate.py) updates older note files to the current schema, normalizes frontmatter, upgrades titles, and renames files to title slugs.
+[`src/migrate.py`](x-bookmarks/src/migrate.py) updates older note files to the current schema, normalizes frontmatter, upgrades titles, and renames files to title slugs.
 
 ## Commands
 
-| Command | Purpose |
-|---------|---------|
-| `uv run x-bookmarks-auth` | Run OAuth setup |
-| `uv run x-bookmarks` | Fetch, categorize, and write bookmarks |
-| `uv run x-bookmarks-migrate /path/to/x-posts` | Migrate older bookmark notes |
+| Command                                       | Purpose                                |
+| --------------------------------------------- | -------------------------------------- |
+| `uv run x-bookmarks-auth`                     | Run OAuth setup                        |
+| `uv run x-bookmarks`                          | Fetch, categorize, and write bookmarks |
+| `uv run x-bookmarks-migrate /path/to/x-posts` | Migrate older bookmark notes           |
 
 ## Current Constraints
 
@@ -103,7 +103,7 @@ Posts use blockquoted tweet text. Articles write article content directly. Both 
 
 ## Testing
 
-The project currently uses `pytest`, `pytest-cov`, `pytest-asyncio`, and `respx`. Coverage is configured with an `80%` threshold in [`pyproject.toml`](/home/tom/Documents/projects/workspace/x-bookmarks/pyproject.toml).
+The project currently uses `pytest`, `pytest-cov`, `pytest-asyncio`, and `respx`. Coverage is configured with an `80%` threshold in [`pyproject.toml`](x-bookmarks/pyproject.toml).
 
 Run:
 

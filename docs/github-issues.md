@@ -1,6 +1,6 @@
 # Proposed GitHub Issues
 
-These issues were extracted from [`docs/roadmap.md`](/home/tom/Documents/projects/workspace/x-bookmarks/docs/roadmap.md) and normalized into a standard tracking format.
+These issues were extracted from [`docs/roadmap.md`](x-bookmarks/docs/roadmap.md) and normalized into a standard tracking format.
 
 ## Issue: Add incremental bookmark fetch with since_id
 

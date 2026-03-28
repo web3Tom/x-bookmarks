@@ -20,12 +20,12 @@ The highest-value work before publishing is repository hygiene and trust-buildin
 
 ### Medium
 
-- `docs/plan.md` does not exist. For issue extraction, [`docs/roadmap.md`](/home/tom/Documents/projects/workspace/x-bookmarks/docs/roadmap.md) is the practical source of truth.
+- `docs/plan.md` does not exist. For issue extraction, [`docs/roadmap.md`](x-bookmarks/docs/roadmap.md) is the practical source of truth.
 - Public docs are now much stronger, but the repository still depends on users understanding X developer prerequisites and local token handling.
 
 ### Low
 
-- [`docs/architecture.excalidraw`](/home/tom/Documents/projects/workspace/x-bookmarks/docs/architecture.excalidraw) may include implementation details that drift over time if not maintained alongside code changes.
+- [`docs/architecture.excalidraw`](x-bookmarks/docs/architecture.excalidraw) may include implementation details that drift over time if not maintained alongside code changes.
 - The repository currently assumes an Obsidian-oriented destination and AI-focused taxonomy, which is fine, but that scope should be stated more explicitly in public docs to avoid overpromising general-purpose bookmark export.
 
 ## Sensitive-Content And Secret-Exposure Review
@@ -92,7 +92,7 @@ The highest-value work before publishing is repository hygiene and trust-buildin
 
 ## Later Improvements
 
-- Keep [`docs/overview.md`](/home/tom/Documents/projects/workspace/x-bookmarks/docs/overview.md) aligned as implementation evolves.
+- Keep [`docs/overview.md`](x-bookmarks/docs/overview.md) aligned as implementation evolves.
 - Expand `CONTRIBUTING.md` only if contributor activity justifies it.
 - Improve credential persistence beyond plaintext `.env`.
 

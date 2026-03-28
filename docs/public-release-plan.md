@@ -23,23 +23,23 @@
 
 ### Root Files
 
-- [`README.md`](/home/tom/Documents/projects/workspace/x-bookmarks/README.md): keep as the primary onboarding path.
-- [`.gitignore`](/home/tom/Documents/projects/workspace/x-bookmarks/.gitignore): keep strict around local state and generated artifacts.
-- [`.env.example`](/home/tom/Documents/projects/workspace/x-bookmarks/.env.example): keep minimal and safe.
-- [`LICENSE`](/home/tom/Documents/projects/workspace/x-bookmarks/LICENSE): keep visible before public push.
+- [`README.md`](x-bookmarks/README.md): keep as the primary onboarding path.
+- [`.gitignore`](x-bookmarks/.gitignore): keep strict around local state and generated artifacts.
+- [`.env.example`](x-bookmarks/.env.example): keep minimal and safe.
+- [`LICENSE`](x-bookmarks/LICENSE): keep visible before public push.
 
 ### Docs
 
-- [`docs/public-release-audit.md`](/home/tom/Documents/projects/workspace/x-bookmarks/docs/public-release-audit.md): use as the publication review record.
-- [`docs/public-release-plan.md`](/home/tom/Documents/projects/workspace/x-bookmarks/docs/public-release-plan.md): use as the cleanup checklist.
-- [`docs/github-issues.md`](/home/tom/Documents/projects/workspace/x-bookmarks/docs/github-issues.md): use to seed the repo issue tracker.
-- [`docs/overview.md`](/home/tom/Documents/projects/workspace/x-bookmarks/docs/overview.md): keep aligned with current implementation.
+- [`docs/public-release-audit.md`](x-bookmarks/docs/public-release-audit.md): use as the publication review record.
+- [`docs/public-release-plan.md`](x-bookmarks/docs/public-release-plan.md): use as the cleanup checklist.
+- [`docs/github-issues.md`](x-bookmarks/docs/github-issues.md): use to seed the repo issue tracker.
+- [`docs/overview.md`](x-bookmarks/docs/overview.md): keep aligned with current implementation.
 
 ### Code
 
-- [`src/config.py`](/home/tom/Documents/projects/workspace/x-bookmarks/src/config.py:43): keep the default output root portable.
-- [`src/auth_helper.py`](/home/tom/Documents/projects/workspace/x-bookmarks/src/auth_helper.py:100): document plaintext token persistence clearly.
-- [`src/categorizer.py`](/home/tom/Documents/projects/workspace/x-bookmarks/src/categorizer.py:10): ensure public docs match the dynamic taxonomy behavior.
+- [`src/config.py`](x-bookmarks/src/config.py:43): keep the default output root portable.
+- [`src/auth_helper.py`](x-bookmarks/src/auth_helper.py:100): document plaintext token persistence clearly.
+- [`src/categorizer.py`](x-bookmarks/src/categorizer.py:10): ensure public docs match the dynamic taxonomy behavior.
 
 ## Step-By-Step Workflow
 
@@ -58,7 +58,7 @@
 - [ ] `README.md` explains prerequisites and quick start clearly.
 - [ ] License file is present.
 - [ ] Stale docs are updated or clearly labeled.
-- [ ] Roadmap issues are created or ready to create from [`docs/github-issues.md`](/home/tom/Documents/projects/workspace/x-bookmarks/docs/github-issues.md).
+- [ ] Roadmap issues are created or ready to create from [`docs/github-issues.md`](x-bookmarks/docs/github-issues.md).
 - [ ] Test suite passes locally.
 - [ ] `git status` is clean except for intentional release changes.
 
