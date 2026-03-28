@@ -34,7 +34,7 @@ You can override the root with `KNOWLEDGE_BASE_DIR`.
 3. Fetch bookmarks from the X API.
 4. Skip bookmarks that already exist in the target directory.
 5. Ask Claude to generate a title plus `category` and `sub_category`.
-6. Write one Markdown note per bookmark plus a Dataview index.
+6. Write one Markdown note per bookmark.
 7. Append structured run metadata to `.x-bookmarks-history.jsonl`.
 
 ## Main Components

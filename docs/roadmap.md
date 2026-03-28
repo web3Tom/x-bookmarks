@@ -9,20 +9,17 @@
 - [x] Claude-based categorization (single batch)
 - [x] Obsidian Markdown generation with frontmatter
 - [x] Deduplication at write time by `tweet_id`
-- [x] Dataview index file generation
 - [x] Long-form tweet (`note_tweet`) support
 - [x] X Article detection and content extraction
 
 ### v1.1 — Efficiency & Configuration
 - [x] Early deduplication — filter already-saved bookmarks **before** Claude API call to avoid wasting credits
 - [x] `KNOWLEDGE_BASE_DIR` env var — configurable knowledge base root path
-- [x] Fix Dataview `FROM` path (`x-test` → `x-posts`)
 
 ### v1.2 — Taxonomy Alignment
 - [x] **Align taxonomy with AGENTS.md** — enforce the fixed 10-category AI taxonomy in the Claude system prompt instead of free-form categorization
 - [x] **subCategory frontmatter field** — added `subCategory` (camelCase) to frontmatter for finer-grained Dataview queries
 - [x] **Body structure alignment** — restructured note body to `## {title}` / `## References` sections (initial v1.2 used `## Notes`; subsequently replaced with `## {title}` for descriptive headings; `migrate.py` exists to backfill old files)
-- [x] **Dataview index update** — added `subCategory` column, updated `SORT` to `category ASC, subCategory ASC, date DESC`
 
 ## Planned
 

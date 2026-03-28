@@ -24,8 +24,6 @@ def read_existing_taxonomy(output_dir: Path) -> dict[str, set[str]]:
     if not output_dir.exists():
         return taxonomy
     for md_file in output_dir.glob("*.md"):
-        if md_file.name == "index.md":
-            continue
         content = md_file.read_text()
         cat_match = _FRONTMATTER_CATEGORY_RE.search(content)
         sub_match = _FRONTMATTER_SUBCATEGORY_RE.search(content)

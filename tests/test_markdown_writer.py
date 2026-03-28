@@ -377,16 +377,6 @@ class TestReadAllExistingIds:
         result = read_existing_ids(tmp_output_dir)
         assert result == {"100", "200"}
 
-    def test_index_md_skipped(self, tmp_output_dir):
-        (tmp_output_dir / "index.md").write_text(
-            '---\ntitle: X Bookmarks\ntweet_url: "https://x.com/x/status/999"\n---\nDataview query\n'
-        )
-        (tmp_output_dir / "2026-02-24-alice.md").write_text(
-            '---\ntitle: "Hello"\ntweet_url: "https://x.com/alice/status/100"\n---\n> Hello\n'
-        )
-        result = read_existing_ids(tmp_output_dir)
-        assert result == {"100"}
-
     def test_nonexistent_dir(self, tmp_path):
         result = read_existing_ids(tmp_path / "nonexistent")
         assert result == set()
@@ -471,7 +461,7 @@ class TestWriteBookmarks:
         ct = CategorizedTweet(tweet=tweet, category=cat, title="Test YAML Safety")
         write_bookmarks((ct,), tmp_output_dir)
 
-        files = [f for f in tmp_output_dir.glob("*.md") if f.name != "index.md"]
+        files = list(tmp_output_dir.glob("*.md"))
         assert len(files) == 1
         content = files[0].read_text()
         # Extract YAML between --- markers

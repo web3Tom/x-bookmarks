@@ -14,13 +14,11 @@ _TWEET_URL_ID_PATTERN = re.compile(r'^tweet_url:\s*"https://x\.com/\S+/status/(\
 
 
 def read_existing_ids(output_dir: Path) -> set[str]:
-    """Scan *.md frontmatter for tweet IDs extracted from tweet_url values (skip index.md)."""
+    """Scan *.md frontmatter for tweet IDs extracted from tweet_url values."""
     all_ids: set[str] = set()
     if not output_dir.exists():
         return all_ids
     for md_file in output_dir.glob("*.md"):
-        if md_file.name == "index.md":
-            continue
         content = md_file.read_text()
         all_ids.update(_TWEET_URL_ID_PATTERN.findall(content))
     return all_ids
@@ -163,7 +161,7 @@ def write_bookmarks(
 
     existing_ids = read_existing_ids(output_dir)
     existing_names: set[str] = {
-        f.name for f in output_dir.glob("*.md") if f.name != "index.md"
+        f.name for f in output_dir.glob("*.md")
     }
 
     stats: dict[str, int | list[str]] = {

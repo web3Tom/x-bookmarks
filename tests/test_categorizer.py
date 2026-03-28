@@ -151,13 +151,6 @@ class TestReadExistingTaxonomy:
             "ML Research": {"Applied ML"},
         }
 
-    def test_skips_index_md(self, tmp_path):
-        (tmp_path / "index.md").write_text(
-            '---\ncategory: "Ignored"\nsubCategory: "Ignored"\n---'
-        )
-        result = read_existing_taxonomy(tmp_path)
-        assert result == {}
-
     def test_skips_files_without_both_fields(self, tmp_path):
         (tmp_path / "2025-01-01-user.md").write_text('---\ntitle: "No category here"\n---')
         result = read_existing_taxonomy(tmp_path)

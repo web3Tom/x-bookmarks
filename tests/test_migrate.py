@@ -99,8 +99,6 @@ def old_bookmark_dir(tmp_path: Path) -> Path:
         'has_media: true\nhas_links: false\n---\n\n'
         '## Notes\n\nSecond post body.\n'
     )
-    (d / "index.md").write_text("---\ntitle: X Bookmarks\n---\n\nDataview query\n")
-
     return d
 
 
@@ -426,7 +424,7 @@ class TestMigrateSingleFile:
             )
         bm_a = parse_existing_bookmark(tmp_path / "a.md")
         bm_b = parse_existing_bookmark(tmp_path / "b.md")
-        existing: set[str] = {"index.md"}
+        existing: set[str] = set()
 
         r1 = migrate_single_file(bm_a, {"title": "Same Title", "category": "AI", "sub_category": "X"}, existing)
         existing.add(r1.new_filename)
@@ -440,16 +438,6 @@ class TestMigrateSingleFile:
 # --- TestMigrateDirectory ---
 
 class TestMigrateDirectory:
-    @patch("src.migrate.generate_titles_batch")
-    def test_skips_index_md(self, mock_gen: MagicMock, old_bookmark_dir: Path):
-        mock_gen.return_value = {
-            "2026-01-15-alice.md": {"title": "Alice Title", "category": "AI Coding", "sub_category": "Coding Workflows"},
-            "2026-01-16-bob.md": {"title": "Bob Title", "category": "Agent Architectures", "sub_category": "Applied Agents"},
-        }
-        results = migrate_directory(old_bookmark_dir, api_key="test-key")
-        filenames = [r.old_filename for r in results]
-        assert "index.md" not in filenames
-
     @patch("src.migrate.generate_titles_batch")
     def test_processes_all_md_files(self, mock_gen: MagicMock, old_bookmark_dir: Path):
         mock_gen.return_value = {

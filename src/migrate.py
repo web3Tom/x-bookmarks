@@ -335,9 +335,7 @@ def migrate_directory(
     dry_run: bool = False,
 ) -> list[MigrationResult]:
     """Scan directory for *.md, batch Claude calls, migrate each file."""
-    md_files = sorted(
-        f for f in directory.glob("*.md") if f.name != "index.md"
-    )
+    md_files = sorted(directory.glob("*.md"))
 
     if not md_files:
         logger.info("No markdown files found in %s", directory)
