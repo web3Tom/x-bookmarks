@@ -51,7 +51,8 @@ class TestConfig:
         assert config.client_id == "test_client_id"
         assert config.refresh_token == "test_refresh"
 
-    def test_output_dir_is_correct(self, minimal_env):
+    def test_output_dir_is_correct(self, minimal_env, monkeypatch):
+        monkeypatch.delenv("KNOWLEDGE_BASE_DIR", raising=False)
         config = load_config(env_path=minimal_env)
         expected = Path.home() / "x-bookmarks-data/03_AI/x/x-posts"
         assert config.output_dir == expected
@@ -60,6 +61,13 @@ class TestConfig:
         monkeypatch.setenv("KNOWLEDGE_BASE_DIR", "/tmp/custom-kb")
         config = load_config(env_path=minimal_env)
         assert config.output_dir == Path("/tmp/custom-kb/03_AI/x/x-posts")
+
+    def test_output_dir_expands_tilde(self, minimal_env, monkeypatch):
+        monkeypatch.setenv("KNOWLEDGE_BASE_DIR", "~/my-kb")
+        config = load_config(env_path=minimal_env)
+        assert "~" not in str(config.output_dir)
+        assert config.output_dir.is_absolute()
+        assert str(config.output_dir).endswith("my-kb/03_AI/x/x-posts")
 
     def test_missing_client_id_raises(self, tmp_path, monkeypatch):
         env_file = tmp_path / ".env"

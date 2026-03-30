@@ -49,7 +49,21 @@ You can override the root with `KNOWLEDGE_BASE_DIR`.
 
 ### Bookmark Fetching
 
-[`src/api_client.py`](x-bookmarks/src/api_client.py) fetches bookmarks from `GET /2/users/{user_id}/bookmarks`, paginates up to the current cap, and refreshes tokens on `401`.
+[`src/api_client.py`](x-bookmarks/src/api_client.py) fetches bookmarks from `GET /2/users/{user_id}/bookmarks` with the following behavior:
+
+- Requests up to 100 bookmarks per page (`max_results=100`).
+- Paginates via `next_token` until either 800 total bookmarks are collected or the API returns no more pages.
+- Refreshes the OAuth access token automatically on `401`.
+- The X API returns bookmarks newest-first and has a known pagination bug where `next_token` stops being returned after approximately 3 pages (~300 bookmarks), even when the user has more.
+
+### Deduplication
+
+Dedup runs after all fetching completes, not during pagination:
+
+1. `read_existing_ids` scans `*.md` files in the output directory and extracts tweet IDs from `tweet_url` frontmatter.
+2. Fetched bookmarks are filtered against these IDs. Only novel tweets proceed to categorization.
+3. If all fetched bookmarks are already saved, the run exits immediately with `noop` status.
+4. A second defensive dedup check runs during file writing.
 
 ### Categorization
 
@@ -95,11 +109,13 @@ Posts use blockquoted tweet text. Articles write article content directly. Both 
 
 ## Current Constraints
 
-- Requires an X developer setup with bookmark access.
+- Requires an X developer app with bookmark access (Basic tier or higher; Free tier has no bookmark access).
 - Requires a valid Anthropic API key.
 - Stores tokens locally in plaintext `.env`.
 - Assumes an Obsidian-oriented output structure.
 - Uses a single Claude request per run today; large runs are a roadmap item for chunking.
+- The X API has a known pagination bug that caps retrieval at approximately 300 bookmarks (~3 pages) even when the user has more. Run the tool regularly to keep new bookmarks within the retrievable window.
+- There is no early-stop optimization during fetching; all pages are fetched before dedup runs.
 
 ## Testing
 

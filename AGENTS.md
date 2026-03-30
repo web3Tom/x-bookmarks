@@ -120,6 +120,37 @@ If a local issue-sync workflow is established later, use it to refresh planning 
 - treat `docs/roadmap.md` as the higher-level planning document
 - manually reconcile issue status back into docs when major planning changes are made
 
+## Fetch, Pagination, And Deduplication
+
+### X API Behavior
+
+- The bookmarks endpoint (`GET /2/users/{user_id}/bookmarks`) returns bookmarks **newest-first**.
+- Each page returns up to 100 results (`max_results=100`).
+- The API supports pagination via `next_token` in the response metadata.
+- **Known API limitation:** pagination often stops after approximately 3 pages (~300 bookmarks) even when the user has more. The API stops returning `next_token` prematurely. This is a documented X API bug, not a code issue.
+- Bookmarks require at least the Basic tier ($100/month). The Free tier has no bookmark access.
+
+### Fetch Logic (`src/api_client.py`)
+
+- `fetch_bookmarks` loops requesting pages of 100 until either:
+  - 800 total tweets are collected (`_MAX_BOOKMARKS`), or
+  - the API returns no `next_token` (no more pages available)
+- On `401`, the client refreshes the OAuth token automatically and retries the request.
+- **No dedup logic exists during fetching.** The fetch loop has no awareness of which bookmarks are already saved locally.
+
+### Deduplication (`src/main.py` and `src/markdown_writer.py`)
+
+Dedup happens in two passes, both **after** all fetching completes:
+
+1. **Pre-categorization** (`main.py` lines 107-124): `read_existing_ids` scans all `*.md` files in the output directory, extracts tweet IDs from `tweet_url` frontmatter fields, and filters the fetched list. Only novel tweets (IDs not on disk) proceed to categorization. If zero novel tweets remain, the run exits with `noop` status.
+2. **At write time** (`markdown_writer.py` lines 164-178): a defensive second check skips any tweet ID that appeared on disk between the pre-categorization check and file writing.
+
+### Practical Implications
+
+- Each run fetches whatever the X API returns (typically 1-3 pages) and then deduplicates against disk.
+- There is **no early-stop optimization** that skips remaining pages when duplicates are found during fetching.
+- Because the API returns newest-first and often caps at ~300 bookmarks, the tool works best when run regularly so new bookmarks stay within the retrievable window.
+
 ## Validation Checklist
 
 Before finishing:

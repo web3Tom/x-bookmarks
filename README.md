@@ -64,14 +64,20 @@ uv run x-bookmarks
 
 ## Features
 
-- Fetches bookmarks from the X API with pagination
+- Fetches bookmarks from the X API with pagination (up to 100 per page, 800 max per run)
 - Refreshes expired access tokens automatically
+- Deduplicates against previously saved notes before categorizing
 - Uses Claude to generate a title plus `category` and `subCategory`
 - Writes Obsidian-friendly Markdown with Dataview-compatible frontmatter
 - Uses title-based filenames such as `{title-slug}.md`
-- Skips bookmarks that were already written
 - Supports long-form posts and X Articles
 - Includes a migration command for older bookmark files
+
+## Known Limitations
+
+- **X API pagination bug:** The bookmarks endpoint often stops returning pages after approximately 300 bookmarks (~3 pages), even when you have more saved. This is a known X API issue. Run the tool regularly so new bookmarks stay within the retrievable window.
+- **No fetch-time dedup:** All available pages are fetched before deduplication runs. There is no early-stop optimization that skips remaining pages when duplicates are found.
+- **API tier requirement:** Bookmark access requires at least the X API Basic tier. The Free tier does not support bookmarks.
 
 ## Migration
 

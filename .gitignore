@@ -26,3 +26,6 @@ wheels/
 # Logs
 excalidraw.log
 *.log
+
+# Prevent literal tilde directories from accidental unexpanded paths
+~/
