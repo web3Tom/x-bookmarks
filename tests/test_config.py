@@ -54,20 +54,20 @@ class TestConfig:
     def test_output_dir_is_correct(self, minimal_env, monkeypatch):
         monkeypatch.delenv("KNOWLEDGE_BASE_DIR", raising=False)
         config = load_config(env_path=minimal_env)
-        expected = Path.home() / "x-bookmarks-data/bookmarks/posts"
+        expected = Path.home() / "x-bookmarks-data"
         assert config.output_dir == expected
 
     def test_output_dir_from_env_override(self, minimal_env, monkeypatch):
         monkeypatch.setenv("KNOWLEDGE_BASE_DIR", "/tmp/custom-kb")
         config = load_config(env_path=minimal_env)
-        assert config.output_dir == Path("/tmp/custom-kb/bookmarks/posts")
+        assert config.output_dir == Path("/tmp/custom-kb")
 
     def test_output_dir_expands_tilde(self, minimal_env, monkeypatch):
         monkeypatch.setenv("KNOWLEDGE_BASE_DIR", "~/my-kb")
         config = load_config(env_path=minimal_env)
         assert "~" not in str(config.output_dir)
         assert config.output_dir.is_absolute()
-        assert str(config.output_dir).endswith("my-kb/bookmarks/posts")
+        assert str(config.output_dir).endswith("my-kb")
 
     def test_missing_client_id_raises(self, tmp_path, monkeypatch):
         env_file = tmp_path / ".env"

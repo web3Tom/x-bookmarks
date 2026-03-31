@@ -46,12 +46,10 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 ### 5. Set your output location
 
-Set `KNOWLEDGE_BASE_DIR` in `.env` if you want to override the default output root.
+Set `KNOWLEDGE_BASE_DIR` in `.env` to the directory where you want bookmark notes written.
 
-Generated notes are written under:
-
-```text
-${KNOWLEDGE_BASE_DIR}/bookmarks/posts/
+```dotenv
+KNOWLEDGE_BASE_DIR=/path/to/your/notes
 ```
 
 If `KNOWLEDGE_BASE_DIR` is unset, the tool defaults to `~/x-bookmarks-data`.

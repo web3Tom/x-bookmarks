@@ -17,15 +17,14 @@ Project URL:
 
 ## Output Model
 
-| Setting             | Value                                 |
-| ------------------- | ------------------------------------- |
-| Default root        | `~/x-bookmarks-data`                  |
-| Output subdirectory | `bookmarks/posts/`                    |
-| Default final path  | `~/x-bookmarks-data/bookmarks/posts/` |
-| Filename format     | `{title-slug}.md`                     |
-| Collision handling  | Numeric suffixes such as `-2`, `-3`   |
+| Setting            | Value                               |
+| ------------------ | ----------------------------------- |
+| Env var            | `KNOWLEDGE_BASE_DIR`                |
+| Default            | `~/x-bookmarks-data`               |
+| Filename format    | `{title-slug}.md`                   |
+| Collision handling | Numeric suffixes such as `-2`, `-3` |
 
-You can override the root with `KNOWLEDGE_BASE_DIR`.
+`KNOWLEDGE_BASE_DIR` is the exact directory where notes are written. No subdirectory is appended.
 
 ## Core Flow
 

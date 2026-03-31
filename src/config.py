@@ -44,6 +44,5 @@ def load_config(env_path: Path | None = None) -> Config:
                 "KNOWLEDGE_BASE_DIR",
                 str(Path.home() / "x-bookmarks-data"),
             )
-        ).expanduser().resolve()
-        / "bookmarks/posts",
+        ).expanduser().resolve(),
     )
