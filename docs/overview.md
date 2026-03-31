@@ -20,8 +20,8 @@ Project URL:
 | Setting             | Value                                 |
 | ------------------- | ------------------------------------- |
 | Default root        | `~/x-bookmarks-data`                  |
-| Output subdirectory | `03_AI/x/x-posts/`                    |
-| Default final path  | `~/x-bookmarks-data/03_AI/x/x-posts/` |
+| Output subdirectory | `bookmarks/posts/`                    |
+| Default final path  | `~/x-bookmarks-data/bookmarks/posts/` |
 | Filename format     | `{title-slug}.md`                     |
 | Collision handling  | Numeric suffixes such as `-2`, `-3`   |
 

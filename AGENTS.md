@@ -71,10 +71,10 @@ Rules:
 
 ## Documentation Expectations
 
-- Keep [`README.md`](/home/tom/Documents/projects/workspace/x-bookmarks/README.md) aligned with the real setup flow.
-- Keep [`docs/overview.md`](/home/tom/Documents/projects/workspace/x-bookmarks/docs/overview.md) aligned with current architecture and behavior.
-- Keep [`docs/roadmap.md`](/home/tom/Documents/projects/workspace/x-bookmarks/docs/roadmap.md) as the planning source unless replaced intentionally.
-- Keep [`docs/github-issues.md`](/home/tom/Documents/projects/workspace/x-bookmarks/docs/github-issues.md) in sync when roadmap items are re-scoped materially.
+- Keep [`README.md`](README.md) aligned with the real setup flow.
+- Keep [`docs/overview.md`](docs/overview.md) aligned with current architecture and behavior.
+- Keep [`docs/roadmap.md`](docs/roadmap.md) as the planning source unless replaced intentionally.
+- Keep [`docs/github-issues.md`](docs/github-issues.md) in sync when roadmap items are re-scoped materially.
 
 ## GitHub Workflow
 
@@ -103,8 +103,8 @@ Before pushing:
 
 Canonical source for issue creation:
 
-- [`docs/github-issues.md`](/home/tom/Documents/projects/workspace/x-bookmarks/docs/github-issues.md)
-- [`docs/roadmap.md`](/home/tom/Documents/projects/workspace/x-bookmarks/docs/roadmap.md)
+- [`docs/github-issues.md`](docs/github-issues.md)
+- [`docs/roadmap.md`](docs/roadmap.md)
 
 If GitHub API workflow is available:
 

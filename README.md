@@ -51,7 +51,7 @@ Set `KNOWLEDGE_BASE_DIR` in `.env` if you want to override the default output ro
 Generated notes are written under:
 
 ```text
-${KNOWLEDGE_BASE_DIR}/03_AI/x/x-posts/
+${KNOWLEDGE_BASE_DIR}/bookmarks/posts/
 ```
 
 If `KNOWLEDGE_BASE_DIR` is unset, the tool defaults to `~/x-bookmarks-data`.

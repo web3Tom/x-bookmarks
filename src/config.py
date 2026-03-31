@@ -45,5 +45,5 @@ def load_config(env_path: Path | None = None) -> Config:
                 str(Path.home() / "x-bookmarks-data"),
             )
         ).expanduser().resolve()
-        / "03_AI/x/x-posts",
+        / "bookmarks/posts",
     )
