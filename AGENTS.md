@@ -76,6 +76,21 @@ Rules:
 - Keep [`docs/roadmap.md`](docs/roadmap.md) as the planning source unless replaced intentionally.
 - Keep [`docs/github-issues.md`](docs/github-issues.md) in sync when roadmap items are re-scoped materially.
 
+## Roadmap & Change-Log Conventions
+
+### Roadmap Structure
+
+- Planned work in [`docs/roadmap.md`](docs/roadmap.md) is organized into five priority tiers (Safety & Efficiency Foundations → Reliability → Content Quality → UX & Automation → Polish).
+- Each Planned item is prefixed with its GitHub issue reference in `[#NN]` form, keyed to [`docs/github-issues.md`](docs/github-issues.md) and the live issue tracker at `https://github.com/web3Tom/x-bookmarks/issues`.
+- When re-ordering, update tier assignment and keep the Priority Rationale and Dependency Notes blocks in sync.
+- Do not revert to topic-based subheadings (Fetch Efficiency, Content Enrichment, etc.) — tiers convey execution order, which topic groupings did not.
+
+### Change-Log Conventions
+
+- [`docs/CHANGELOG.md`](docs/CHANGELOG.md) is the in-repo session log. Append a dated entry for every work session that produces a meaningful outcome (feature work, pipeline runs, roadmap changes, protocol updates).
+- Keep entries short, outcome-focused, and reverse-chronological (newest entry at top).
+- Long-form reasoning, open questions, and cross-session context belong in the author's external spec system — not in this repo.
+
 ## GitHub Workflow
 
 Repository:
