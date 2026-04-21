@@ -24,4 +24,4 @@ Newest entry at the top. Long-form reasoning lives in the author's external spec
 - Untracked `docs/public-release-plan.md` and `docs/public-release-audit.md` (kept local). Internal planning artifacts; not intended for public consumption.
 - Added a Pre-Commit Privacy Review directive in `AGENTS.md` requiring a public/private check of every staged file before commit, with an explicit untrack recipe.
 - Pruned broken Project Docs links from `README.md` and added a pointer to `docs/CHANGELOG.md`.
-- Caveat: past commits on the public GitHub repo still contain the now-untracked files. Purging them from history requires `git filter-repo` or BFG + a force-push — deferred pending explicit user decision.
+- Caveat: past commits on the public GitHub repo still contain the now-untracked files. Decision: **accept the historical leak** — content is internal planning, not secrets; no history rewrite or force-push. Going forward, `.gitignore` + the pre-commit privacy directive prevent recurrence.
