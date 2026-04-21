@@ -43,6 +43,16 @@ Use `obsidian-markdown` by default for Markdown files in this repository.
 - Before finishing, review `git diff --staged` or `git status` for accidental local-only changes.
 - Keep default paths portable; avoid author-specific home-directory assumptions in public docs or code unless clearly justified.
 
+### Pre-Commit Privacy Review (Required)
+
+Before every commit and push:
+
+- Review every file in the staged diff for whether it is appropriate to be publicly visible on GitHub.
+- Reject or untrack any file that contains: internal planning notes, audit documents, decision logs unrelated to the public tool, competitive analysis, personal filesystem paths (`/home/`, `/Users/`, `C:\Users\`), personal email addresses, real tokens or API keys, real user IDs, or vault-layout-specific directory names.
+- To untrack a file that should stay local: add its path to [`.gitignore`](.gitignore) and run `git rm --cached <path>` before committing. The local copy stays on disk; it just stops being tracked.
+- The workspace-level [`CLAUDE.md`](../CLAUDE.md) at the repository parent directory contains the canonical public-repo privacy rules. Treat those rules as binding for this repository.
+- If there is any ambiguity about whether content should be public, stop and ask before committing.
+
 ## Generated Markdown Contract
 
 Generated bookmark notes must continue to follow this frontmatter schema:

@@ -121,9 +121,8 @@ uv run pytest --cov=src --cov-report=term-missing
 
 - [`docs/overview.md`](docs/overview.md)
 - [`docs/roadmap.md`](docs/roadmap.md)
-- [`docs/public-release-audit.md`](docs/public-release-audit.md)
-- [`docs/public-release-plan.md`](docs/public-release-plan.md)
 - [`docs/github-issues.md`](docs/github-issues.md)
+- [`docs/CHANGELOG.md`](docs/CHANGELOG.md)
 - [`AGENTS.md`](AGENTS.md)
 
 ## Security Notes

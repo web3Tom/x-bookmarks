@@ -29,3 +29,7 @@ excalidraw.log
 
 # Prevent literal tilde directories from accidental unexpanded paths
 ~/
+
+# Internal planning — not for public release
+docs/public-release-plan.md
+docs/public-release-audit.md
