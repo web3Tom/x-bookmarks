@@ -23,29 +23,41 @@
 
 ## Planned
 
-### Fetch Efficiency
-- [ ] **Incremental fetch with since_id** — store the most recent tweet_id from last run, use it as a floor to stop pagination early instead of always fetching 800
-- [ ] **Configurable bookmark cap** — expose `_MAX_BOOKMARKS` (currently hardcoded to 800) as a CLI flag or env var
+Items are grouped into execution tiers in priority order. Each links to the corresponding GitHub issue in [`docs/github-issues.md`](github-issues.md). Priority reflects safety-first sequencing: credential hardening and dev-safety scaffolding precede content features.
 
-### Content Enrichment
-- [ ] **Article extraction via Defuddle** — for bookmarks linking to external URLs, fetch and extract clean article content using the `defuddle` skill instead of relying solely on X API article content
-- [ ] **Thread unrolling** — detect tweet threads and stitch them into a single note
-- [ ] **Quote tweet expansion** — inline quoted tweet content into the parent note
+### Tier 1 — Safety & Efficiency Foundations
+- [ ] **[#14] Token persistence security** — replace plaintext `.env` token storage with a more secure mechanism
+- [ ] **[#10] CLI dry-run mode** — `--dry-run` fetches and categorizes without writing files; unlocks safer iteration on later tiers
+- [ ] **[#1] Incremental fetch with `since_id`** — store newest tweet_id from last run and stop pagination once reached
 
-### Categorization
-- [ ] **Batch chunking** — split large bookmark sets into smaller Claude batches to reduce risk of malformed responses on 500+ tweet payloads
+### Tier 2 — Reliability
+- [ ] **[#15] X API rate-limit backoff** — respect rate-limit headers with bounded retries; prerequisite for scheduled runs
+- [ ] **[#6] Chunk large categorization batches** — split 500+ bookmark runs into deterministic Claude calls; avoid silent JSON corruption
+- [ ] **[#2] Configurable bookmark cap** — expose `_MAX_BOOKMARKS` (currently hardcoded at 800) via CLI flag or env var
 
-### Output & Obsidian Integration
-- [ ] **Obsidian tags** — generate `#tags` from category slugs for Obsidian tag-based navigation
-- [ ] **Wikilinks to related notes** — cross-link bookmarks that share authors or categories
-- [ ] **Daily note integration** — append a summary of newly saved bookmarks to the daily note
+### Tier 3 — Content Quality
+- [ ] **[#3] Article extraction for external links** — fetch and clean article body via `defuddle` for non-X URLs
+- [ ] **[#4] Thread unrolling** — detect tweet threads and stitch related posts into a single coherent note
+- [ ] **[#5] Quote tweet expansion** — inline quoted tweet content into the parent note
 
-### CLI & UX
-- [ ] **Dry-run mode** — `--dry-run` flag that fetches and categorizes but writes nothing, showing what would be saved
-- [ ] **Verbose/quiet modes** — control output verbosity
-- [ ] **Summary report** — generate a periodic digest (weekly/monthly) of saved bookmarks by category
+### Tier 4 — UX & Automation
+- [ ] **[#11] Verbose and quiet CLI modes** — control output verbosity for debugging vs automation contexts
+- [ ] **[#7] Obsidian tags from categories** — generate `#tags` from category slugs for tag-based navigation
+- [ ] **[#13] Scheduled run support** — cron/systemd examples; depends on `#14` and `#15`
 
-### Infrastructure
-- [ ] **Scheduled runs** — cron/systemd timer for automated periodic fetching
-- [ ] **Token persistence improvements** — encrypted token storage instead of plaintext `.env`
-- [ ] **Rate limit handling** — respect X API rate limit headers with backoff
+### Tier 5 — Polish
+- [ ] **[#8] Wikilinks between related notes** — cross-link notes that share authors or categories
+- [ ] **[#9] Daily note integration** — append a summary of new bookmarks to the daily note
+- [ ] **[#12] Periodic summary reports** — weekly/monthly digest of saved bookmarks by category
+
+### Dependency Notes
+- `#13` requires `#14` and `#15`
+- `#1` and `#2` pair naturally (both touch fetch loop configuration)
+- `#10` and `#11` pair naturally (both CLI flag work)
+- `#4` and `#5` share tweet-parsing expansion logic
+
+### Priority Rationale
+- **Why `#14` first:** public-release audit flags plaintext token storage as the highest remaining risk.
+- **Why `#10` second:** tiny effort, but makes every later content feature safer to iterate on and demo.
+- **Why `#1` third:** today's run showed 58 of 99 fetched bookmarks were already on disk — `since_id` would avoid fetching them in the first place.
+- **Alternate ordering:** if use is single-user and local-only, promote `#3` (article extraction) above `#14` — bigger day-to-day quality win at the cost of leaving token handling untouched.
