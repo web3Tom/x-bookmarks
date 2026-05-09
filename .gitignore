@@ -17,6 +17,7 @@ wheels/
 
 # Local agent/tooling state
 .claude/
+AGENTS.md
 
 # IDE
 .idea/
