@@ -14,6 +14,7 @@ wheels/
 
 # Secrets
 .env
+.envrc.local
 
 # Local agent/tooling state
 .claude/

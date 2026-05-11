@@ -3,6 +3,16 @@
 Reverse-chronological log of session-level outcomes for this repository.
 Newest entry at the top. Long-form reasoning lives in the author's external spec system, not here.
 
+## 2026-05-09
+
+**Transition to Secure Secret Management**
+
+- Migrated from hardcoded `.env` to a `direnv` + `pass` workflow.
+- Implemented a "smart" `.envrc` that supports `.envrc.local` for private, secure overrides.
+- Updated `.gitignore` to protect `.envrc.local`.
+- Updated `AGENTS.md` to codify the new Secret Management standards.
+- Removed hardcoded API keys from local `.env`.
+
 ## 2026-04-21
 
 **Roadmap restructure and protocol adoption**

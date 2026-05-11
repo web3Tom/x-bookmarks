@@ -38,8 +38,10 @@ Use `obsidian-markdown` by default for Markdown files in this repository.
 
 ## Configuration And Security Rules
 
-- Never commit `.env`, access tokens, refresh tokens, API keys, or copied terminal output containing secrets.
+- Never commit `.env`, `.envrc.local`, access tokens, refresh tokens, API keys, or copied terminal output containing secrets.
 - Treat `.env.example` as the only publishable env file.
+- **Secret Management:** Use `direnv` with `.envrc.local` for local development. This allows fetching secrets from secure storage like `pass` without hardcoding them in the repository.
+  - Example `.envrc.local`: `export ANTHROPIC_API_KEY=$(pass ai/anthropic/api-key)`
 - Before finishing, review `git diff --staged` or `git status` for accidental local-only changes.
 - Keep default paths portable; avoid author-specific home-directory assumptions in public docs or code unless clearly justified.
 
