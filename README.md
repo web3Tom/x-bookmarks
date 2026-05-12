@@ -130,3 +130,4 @@ uv run pytest --cov=src --cov-report=term-missing
 - OAuth tokens and your Anthropic API key are stored locally in `.env`.
 - `.env` is ignored by Git, but you should still review `git status` before every push.
 - The repository does not currently encrypt local token storage.
+- If `ANTHROPIC_API_KEY` is unset (or blank) after loading `.env`, the loader falls back to fetching it from the user's [`pass`](https://www.passwordstore.org/) store at `ai/anthropic/api-key`. This lets you keep the key out of `.env` entirely and still run the tool through a `direnv`/`pass` workflow. The fallback is silently skipped if `pass` is not installed.

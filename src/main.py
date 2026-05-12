@@ -126,7 +126,10 @@ def main() -> None:
     article_count = sum(1 for t in novel if t.article_url)
     if article_count:
         with_content = sum(1 for t in novel if t.article_content)
-        print(f"[{run_id}] Found {article_count} article(s) ({with_content} with content from API).")
+        print(
+            f"[{run_id}] {article_count} of {len(novel)} new bookmark(s) "
+            f"link to articles ({with_content} with content from API)."
+        )
 
     print(f"[{run_id}] Categorizing {len(novel)} new bookmark(s) with Claude...")
 

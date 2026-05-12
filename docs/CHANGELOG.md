@@ -3,6 +3,18 @@
 Reverse-chronological log of session-level outcomes for this repository.
 Newest entry at the top. Long-form reasoning lives in the author's external spec system, not here.
 
+## 2026-05-11
+
+**`pass` vault fallback for `ANTHROPIC_API_KEY`**
+
+- `src/config.py` now resolves `ANTHROPIC_API_KEY` from the user's `pass` store at `ai/anthropic/api-key` when the environment variable is unset or empty after `load_dotenv`.
+- Fallback is gated on `pass` being on `PATH`; missing binary or missing entry returns an empty string and lets the existing "missing required env vars" error fire normally.
+- Closes the gap where a `.env` (or `.envrc.local`) with an empty `ANTHROPIC_API_KEY=` would override a shell-exported value loaded via direnv.
+
+**Pipeline log clarity**
+
+- `src/main.py` article-count line now reports `{articles} of {novel} new bookmark(s) link to articles ({with_content} with content from API)` instead of the prior `Found {articles} article(s)` phrasing. Makes the article-vs-bookmark ratio explicit in run logs.
+
 ## 2026-05-09
 
 **Transition to Secure Secret Management**

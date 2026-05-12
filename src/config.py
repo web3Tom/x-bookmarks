@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -8,6 +10,28 @@ from dotenv import load_dotenv
 
 
 _REQUIRED = ("CLIENT_ID", "ACCESS_TOKEN", "REFRESH_TOKEN", "USER_ID", "ANTHROPIC_API_KEY")
+_PASS_KEY_PATH = "ai/anthropic/api-key"
+
+
+def _resolve_anthropic_key_from_pass() -> str:
+    """Fetch the Anthropic API key from the user's `pass` vault.
+
+    Used when `.env` overrides the shell-exported key with an empty value.
+    Returns "" if `pass` is unavailable or the entry is missing.
+    """
+    if shutil.which("pass") is None:
+        return ""
+    try:
+        result = subprocess.run(
+            ["pass", _PASS_KEY_PATH],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return ""
+    return result.stdout.strip()
 
 
 @dataclass(frozen=True)
@@ -27,6 +51,11 @@ def load_config(env_path: Path | None = None) -> Config:
         load_dotenv(env_path, override=True)
     else:
         load_dotenv(override=True)
+
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        key = _resolve_anthropic_key_from_pass()
+        if key:
+            os.environ["ANTHROPIC_API_KEY"] = key
 
     missing = [key for key in _REQUIRED if not os.environ.get(key)]
     if missing:
