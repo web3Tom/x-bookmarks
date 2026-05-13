@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import re
-from dataclasses import replace
-from datetime import datetime
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -12,6 +12,7 @@ from src.config import Config
 from src.models import BookmarkPage, ExternalLink, Media, Tweet, User
 
 BOOKMARKS_URL = "https://api.x.com/2/users/{user_id}/bookmarks"
+DELETE_BOOKMARK_URL = "https://api.x.com/2/users/{user_id}/bookmarks/{tweet_id}"
 TOKEN_URL = "https://api.x.com/2/oauth2/token"
 
 _MAX_RESULTS = 100
@@ -33,6 +34,38 @@ _MEDIA_FIELDS = ",".join([
 
 _EXCLUDED_DOMAINS = {"x.com", "twitter.com", "t.co"}
 _ARTICLE_PATTERN = re.compile(r"x\.com/i/article/")
+
+_MISSING_BOOKMARK_WRITE_SCOPE = (
+    "403 likely means missing bookmark.write scope. "
+    "Re-run 'uv run x-bookmarks-auth' to re-authorize."
+)
+
+
+@dataclass(frozen=True)
+class DeleteBookmarkResult:
+    tweet_id: str
+    already_absent: bool = False
+
+
+class BookmarkWriteScopeError(RuntimeError):
+    pass
+
+
+class BookmarkDeleteRateLimitError(RuntimeError):
+    def __init__(self, message: str, *, reset_epoch: int | None = None) -> None:
+        super().__init__(message)
+        self.reset_epoch = reset_epoch
+
+    @property
+    def reset_at(self) -> str | None:
+        if self.reset_epoch is None:
+            return None
+        return (
+            datetime.fromtimestamp(self.reset_epoch, tz=timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
 
 
 def _is_external_url(expanded_url: str) -> bool:
@@ -226,3 +259,63 @@ def fetch_bookmarks(
             pagination_token = page.next_token
 
     return tuple(all_tweets)
+
+
+def _rate_limit_reset_epoch(resp: httpx.Response) -> int | None:
+    value = resp.headers.get("x-rate-limit-reset")
+    if not value:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _handle_delete_response(resp: httpx.Response, tweet_id: str) -> DeleteBookmarkResult:
+    if resp.status_code in {200, 204}:
+        return DeleteBookmarkResult(tweet_id=tweet_id)
+    if resp.status_code == 404:
+        return DeleteBookmarkResult(tweet_id=tweet_id, already_absent=True)
+    if resp.status_code == 403:
+        raise BookmarkWriteScopeError(_MISSING_BOOKMARK_WRITE_SCOPE)
+    if resp.status_code == 429:
+        reset_epoch = _rate_limit_reset_epoch(resp)
+        reset_text = (
+            f" Reset at {BookmarkDeleteRateLimitError('', reset_epoch=reset_epoch).reset_at}."
+            if reset_epoch is not None
+            else ""
+        )
+        raise BookmarkDeleteRateLimitError(
+            f"X bookmark delete rate limit reached.{reset_text}",
+            reset_epoch=reset_epoch,
+        )
+    resp.raise_for_status()
+    return DeleteBookmarkResult(tweet_id=tweet_id)
+
+
+def delete_bookmark(
+    config: Config,
+    tweet_id: str,
+    env_path: Path | None = None,
+) -> DeleteBookmarkResult:
+    """Remove a bookmark from X, handling token refresh and expected failures."""
+    current_config = config
+    url = DELETE_BOOKMARK_URL.format(
+        user_id=current_config.user_id,
+        tweet_id=tweet_id,
+    )
+
+    with httpx.Client() as client:
+        headers = {"Authorization": f"Bearer {current_config.access_token}"}
+        resp = client.delete(url, headers=headers)
+
+        if resp.status_code == 401:
+            current_config = refresh_access_token(current_config, env_path)
+            url = DELETE_BOOKMARK_URL.format(
+                user_id=current_config.user_id,
+                tweet_id=tweet_id,
+            )
+            headers = {"Authorization": f"Bearer {current_config.access_token}"}
+            resp = client.delete(url, headers=headers)
+
+    return _handle_delete_response(resp, tweet_id)

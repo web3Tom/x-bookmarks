@@ -30,7 +30,8 @@ _DEPRECATED_FIELDS = frozenset({
 
 _ALLOWED_FIELDS = frozenset({
     "title", "author", "category", "subCategory", "date",
-    "read", "type", "tweet_url", "article_url",
+    "read", "synthesized", "type", "tweet_url", "article_url",
+    "bookmark_removed", "bookmark_removed_at",
 })
 
 
@@ -235,9 +236,12 @@ def _build_migrated_frontmatter(
 
     date_val = parsed.get("date", "")
     read_val = parsed.get("read", False)
+    synthesized_val = parsed.get("synthesized", False)
     bm_type = str(parsed.get("type", "post"))
     tweet_url = str(parsed.get("tweet_url", ""))
     article_url = parsed.get("article_url")
+    bookmark_removed = parsed.get("bookmark_removed")
+    bookmark_removed_at = parsed.get("bookmark_removed_at")
 
     lines = [
         "---",
@@ -247,12 +251,17 @@ def _build_migrated_frontmatter(
         f'subCategory: "{_escape_yaml_string(sub_category)}"',
         f"date: {date_val}",
         f"read: {'true' if read_val else 'false'}",
+        f"synthesized: {'true' if synthesized_val is True else 'false'}",
         f'type: "{_escape_yaml_string(bm_type)}"',
         f'tweet_url: "{_escape_yaml_string(tweet_url)}"',
     ]
 
     if article_url:
         lines.append(f'article_url: "{_escape_yaml_string(str(article_url))}"')
+    if bookmark_removed is True:
+        lines.append("bookmark_removed: true")
+    if bookmark_removed_at:
+        lines.append(f"bookmark_removed_at: {bookmark_removed_at}")
 
     lines.append("---")
     frontmatter = "\n".join(lines) + "\n"

@@ -67,6 +67,7 @@ category: "..."
 subCategory: "..."
 date: 2026-02-25
 read: false
+synthesized: false
 type: "post" # or "article"
 tweet_url: "https://x.com/..."
 article_url: "https://..." # optional — articles only
@@ -80,6 +81,17 @@ Rules:
 - deprecated fields must not be reintroduced
 - the first `##` heading in generated note bodies must match the frontmatter title exactly
 - use `## References` for outbound links
+
+## X Bookmark Removal Safety
+
+`uv run x-bookmarks --remove-synthesized-bookmarks` is an explicit destructive mode and must remain independent from normal sync.
+
+- Normal `uv run x-bookmarks` must never delete X bookmarks or archive notes.
+- Removal scans active `output_dir/*.md` notes only; archived notes do not block future sync deduplication.
+- Only exact lowercase `synthesized: true` is eligible. `false`, missing fields, quoted values, uppercase booleans, malformed YAML, and misspellings are skipped.
+- Generated and backfilled notes default to `synthesized: false`.
+- Live deletion requires either `--confirm` or an interactive `Proceed? [y/N]` confirmation. Use `--dry-run` for previews.
+- After X deletion succeeds or returns 404, annotate with `bookmark_removed: true` and `bookmark_removed_at: YYYY-MM-DDTHH:MM:SSZ`, then archive under `output_dir / "archive"`.
 
 ## Documentation Expectations
 
@@ -169,8 +181,8 @@ If a local issue-sync workflow is established later, use it to refresh planning 
 
 Dedup happens in two passes, both **after** all fetching completes:
 
-1. **Pre-categorization** (`main.py` lines 107-124): `read_existing_ids` scans all `*.md` files in the output directory, extracts tweet IDs from `tweet_url` frontmatter fields, and filters the fetched list. Only novel tweets (IDs not on disk) proceed to categorization. If zero novel tweets remain, the run exits with `noop` status.
-2. **At write time** (`markdown_writer.py` lines 164-178): a defensive second check skips any tweet ID that appeared on disk between the pre-categorization check and file writing.
+1. **Pre-categorization** (`src/main.py`): `read_existing_ids` scans all `*.md` files in the output directory, extracts tweet IDs from `tweet_url` frontmatter fields, and filters the fetched list. Only novel tweets (IDs not on disk) proceed to categorization. If zero novel tweets remain, the run exits with `noop` status.
+2. **At write time** (`src/markdown_writer.py`): a defensive second check skips any tweet ID that appeared on disk between the pre-categorization check and file writing.
 
 ### Practical Implications
 

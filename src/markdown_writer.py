@@ -71,6 +71,7 @@ def _build_frontmatter(tweet: Tweet, category: Category, bookmark_type: str, tit
         f'subCategory: "{_escape_yaml_string(category.sub_category)}"',
         f"date: {date_str}",
         "read: false",
+        "synthesized: false",
         f'type: "{bookmark_type}"',
         f'tweet_url: "{tweet_url}"',
     ]
