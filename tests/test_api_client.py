@@ -4,7 +4,11 @@ import respx
 from datetime import datetime
 
 from src.api_client import (
+    BookmarkDeleteRateLimitError,
+    BookmarkWriteScopeError,
+    DELETE_BOOKMARK_URL,
     fetch_bookmarks,
+    delete_bookmark,
     refresh_access_token,
     parse_tweet,
     parse_bookmarks_response,
@@ -448,6 +452,89 @@ class TestFetchBookmarks:
         )
         tweets = fetch_bookmarks(config)
         assert tweets == ()
+
+
+class TestDeleteBookmark:
+    @respx.mock
+    def test_delete_success(self, config):
+        url = DELETE_BOOKMARK_URL.format(user_id=config.user_id, tweet_id="123")
+        respx.delete(url).mock(return_value=httpx.Response(200, json={"data": {"bookmarked": False}}))
+
+        result = delete_bookmark(config, "123")
+
+        assert result.tweet_id == "123"
+        assert result.already_absent is False
+
+    @respx.mock
+    def test_delete_token_refresh_on_401(self, config, tmp_path):
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            "CLIENT_ID=test_client\n"
+            "ACCESS_TOKEN=test_access\n"
+            "REFRESH_TOKEN=test_refresh\n"
+            "USER_ID=999\n"
+            "ANTHROPIC_API_KEY=sk-ant-test\n"
+        )
+        url = DELETE_BOOKMARK_URL.format(user_id=config.user_id, tweet_id="123")
+        calls = {"n": 0}
+
+        def side_effect(request):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return httpx.Response(401, json={"detail": "Unauthorized"})
+            return httpx.Response(200, json={"data": {"bookmarked": False}})
+
+        respx.delete(url).mock(side_effect=side_effect)
+        respx.post(TOKEN_URL).mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "access_token": "new_access",
+                    "refresh_token": "new_refresh",
+                    "token_type": "bearer",
+                    "expires_in": 7200,
+                },
+            )
+        )
+
+        result = delete_bookmark(config, "123", env_path=env_file)
+
+        assert result.tweet_id == "123"
+        assert calls["n"] == 2
+
+    @respx.mock
+    def test_delete_403_mentions_scope(self, config):
+        url = DELETE_BOOKMARK_URL.format(user_id=config.user_id, tweet_id="123")
+        respx.delete(url).mock(return_value=httpx.Response(403, json={"detail": "Forbidden"}))
+
+        with pytest.raises(BookmarkWriteScopeError, match="bookmark.write"):
+            delete_bookmark(config, "123")
+
+    @respx.mock
+    def test_delete_404_is_success_with_warning_result(self, config):
+        url = DELETE_BOOKMARK_URL.format(user_id=config.user_id, tweet_id="123")
+        respx.delete(url).mock(return_value=httpx.Response(404, json={"detail": "Not found"}))
+
+        result = delete_bookmark(config, "123")
+
+        assert result.already_absent is True
+
+    @respx.mock
+    def test_delete_429_raises_with_reset(self, config):
+        url = DELETE_BOOKMARK_URL.format(user_id=config.user_id, tweet_id="123")
+        respx.delete(url).mock(
+            return_value=httpx.Response(
+                429,
+                headers={"x-rate-limit-reset": "1770000000"},
+                json={"detail": "rate limit"},
+            )
+        )
+
+        with pytest.raises(BookmarkDeleteRateLimitError) as exc_info:
+            delete_bookmark(config, "123")
+
+        assert exc_info.value.reset_epoch == 1770000000
+        assert exc_info.value.reset_at.endswith("Z")
 
 
 class TestRefreshToken:

@@ -4,6 +4,8 @@ from src.auth_helper import _write_env
 class TestWriteEnv:
     def test_preserves_existing_output_dir(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("KNOWLEDGE_BASE_DIR", raising=False)
+        monkeypatch.delenv("KNOWLEDGE_DIR", raising=False)
         (tmp_path / ".env").write_text(
             "CLIENT_ID=old\n"
             "ANTHROPIC_API_KEY=\n"
@@ -22,6 +24,7 @@ class TestWriteEnv:
     def test_persists_output_dir_from_environment(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("KNOWLEDGE_BASE_DIR", "/tmp/from-env")
+        monkeypatch.delenv("KNOWLEDGE_DIR", raising=False)
         (tmp_path / ".env").write_text("CLIENT_ID=old\nANTHROPIC_API_KEY=\n")
 
         _write_env("client", "access", "refresh", "user")

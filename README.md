@@ -37,6 +37,7 @@ uv run x-bookmarks-auth
 ```
 
 This opens a browser for OAuth 2.0 PKCE authorization and writes the returned credentials to `.env`.
+The requested X scopes include `bookmark.read` and `bookmark.write`; the write scope is only used by the explicit removal mode.
 
 ### 4. Add your Anthropic API key
 
@@ -73,6 +74,7 @@ uv run x-bookmarks
 - Uses title-based filenames such as `{title-slug}.md`
 - Supports long-form posts and X Articles
 - Includes a migration command for older bookmark files
+- Includes an explicit, confirmed removal mode for bookmarks whose notes are marked `synthesized: true`
 
 ## Known Limitations
 
@@ -112,6 +114,30 @@ uv run x-bookmarks-migrate /path/to/x-posts --verbose
 | `--batch-size N` | Files per Claude API call |
 | `--api-key KEY` | Anthropic API key override |
 
+## Removing Synthesized X Bookmarks
+
+Removal mode is destructive and opt-in. Normal sync never deletes X bookmarks or archives notes.
+
+Preview eligible notes:
+
+```bash
+uv run x-bookmarks --remove-synthesized-bookmarks --dry-run
+```
+
+Live deletion requires confirmation:
+
+```bash
+uv run x-bookmarks --remove-synthesized-bookmarks --confirm
+```
+
+Eligibility is strict: only active notes in `KNOWLEDGE_BASE_DIR` with exact `synthesized: true` are candidates. Notes with `synthesized: false`, missing fields, quoted values, uppercase booleans, or malformed frontmatter are skipped. Before scanning, the CLI backfills active notes that lack the field with `synthesized: false`.
+
+After a successful X deletion, or a `404` indicating the bookmark is already absent, the note is annotated with `bookmark_removed: true` and `bookmark_removed_at`, then moved to `KNOWLEDGE_BASE_DIR/archive`. Archived notes do not block future sync deduplication.
+
+If deletion returns `403`, re-run `uv run x-bookmarks-auth`; older tokens do not gain the new `bookmark.write` scope automatically.
+
+Live deletion is capped at 50 bookmarks per run. Use `--max N` to process fewer.
+
 ## Development
 
 Run the test suite with coverage:
@@ -126,6 +152,7 @@ uv run pytest --cov=src --cov-report=term-missing
 - [`docs/roadmap.md`](docs/roadmap.md)
 - [`docs/github-issues.md`](docs/github-issues.md)
 - [`docs/CHANGELOG.md`](docs/CHANGELOG.md)
+- [`docs/prds/prd-x-bookmark-removal.md`](docs/prds/prd-x-bookmark-removal.md)
 - [`AGENTS.md`](AGENTS.md)
 
 ## Security Notes

@@ -5,6 +5,14 @@ Newest entry at the top. Long-form reasoning lives in the author's external spec
 
 ## 2026-05-13
 
+**Synthesized bookmark removal**
+
+- Added `--remove-synthesized-bookmarks` mode with `--dry-run`, `--confirm`, interactive confirmation, and `--max` capped at 50 live deletions.
+- Added strict `synthesized` handling: generated notes now use `synthesized: false`; removal is eligible only for exact `synthesized: true`; backfill covers active notes before removal scans.
+- Added X bookmark DELETE support with 401 refresh retry, 403 `bookmark.write` guidance, 404 idempotent success, and 429 reset reporting.
+- Successful or already-absent removals now add `bookmark_removed` metadata, archive notes under `output_dir / "archive"`, and append removal-mode records to `.x-bookmarks-history.jsonl`.
+- Updated README, overview, roadmap, PRD, repo instructions, and vault template/Base/feed docs for the removal workflow.
+
 **Output directory persistence**
 
 - `x-bookmarks-auth` now preserves local output configuration when it rewrites `.env` after OAuth, preventing `KNOWLEDGE_BASE_DIR` from being dropped during re-authentication.

@@ -148,6 +148,7 @@ class TestBuildFrontmatter:
         assert 'subCategory: "Applied Agents"' in fm
         assert "date: 2026-02-24" in fm
         assert "read: false" in fm
+        assert "synthesized: false" in fm
         assert 'type: "post"' in fm
         assert 'tweet_url: "https://x.com/alice/status/1"' in fm
         assert "author_name" not in fm
@@ -169,6 +170,7 @@ class TestBuildFrontmatter:
         assert parsed["title"] == "Hello world"
         assert parsed["category"] == "AI Agents"
         assert parsed["subCategory"] == "Applied Agents"
+        assert parsed["synthesized"] is False
         assert parsed["type"] == "post"
 
     def test_subcategory_in_frontmatter(self):
@@ -470,5 +472,4 @@ class TestWriteBookmarks:
         parsed = yaml.safe_load(yaml_body)
         assert parsed["title"] == "Test YAML Safety"
         assert parsed["subCategory"] == "Inference & Serving"
-
 

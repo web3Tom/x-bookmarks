@@ -7,6 +7,7 @@ from pathlib import Path
 from src.main import main, _build_run_record, _append_history, _count_categories, _HISTORY_FILENAME
 from src.models import Tweet, User, Category, CategorizedTweet
 from src.config import Config
+from src.api_client import DeleteBookmarkResult
 
 
 def _make_tweet(id: str = "1", text: str = "Hello", article_url: str | None = None, article_content: str | None = None) -> Tweet:
@@ -38,6 +39,23 @@ def _write_stats(files: int = 0, dupes: int = 0, filenames: list[str] | None = N
     }
 
 
+def _write_note(path: Path, tweet_id: str = "1", synthesized: str = "true") -> None:
+    path.write_text(
+        "---\n"
+        'title: "Test"\n'
+        'author: "@test"\n'
+        'category: "AI Coding"\n'
+        'subCategory: "Coding Workflows"\n'
+        "date: 2026-05-13\n"
+        "read: false\n"
+        f"synthesized: {synthesized}\n"
+        'type: "post"\n'
+        f'tweet_url: "https://x.com/test/status/{tweet_id}"\n'
+        "---\n"
+        "## Test\n"
+    )
+
+
 class TestMain:
     @patch("src.main.write_bookmarks")
     @patch("src.main.categorize_tweets")
@@ -58,7 +76,7 @@ class TestMain:
 
         mock_write.return_value = _write_stats(2, filenames=["hello.md", "hello-2.md"])
 
-        main()
+        main([])
 
         mock_fetch.assert_called_once_with(config)
         mock_categorize.assert_called_once_with(tweets, api_key="sk-test", output_dir=tmp_path)
@@ -74,7 +92,7 @@ class TestMain:
     def test_config_error_exits(self, mock_config, capsys):
         mock_config.side_effect = ValueError("Missing: CLIENT_ID")
         with pytest.raises(SystemExit) as exc_info:
-            main()
+            main([])
         assert exc_info.value.code == 1
         assert "Configuration error" in capsys.readouterr().out
 
@@ -84,7 +102,7 @@ class TestMain:
         mock_config.return_value = _make_config(tmp_path)
         mock_fetch.return_value = ()
 
-        main()
+        main([])
 
         output = capsys.readouterr().out
         assert "No bookmarks found" in output
@@ -114,7 +132,7 @@ class TestMain:
         mock_categorize.return_value = (categorized, {"input_tokens": 50, "output_tokens": 25})
         mock_write.return_value = _write_stats(2, filenames=["a.md", "b.md"])
 
-        main()
+        main([])
 
         output = capsys.readouterr().out
         assert "1 of 2 new bookmark(s) link to articles (1 with content from API)" in output
@@ -139,7 +157,7 @@ class TestMain:
         mock_categorize.return_value = (categorized, {"input_tokens": 50, "output_tokens": 25})
         mock_write.return_value = _write_stats(2, filenames=["a.md", "b.md"])
 
-        main()
+        main([])
 
         output = capsys.readouterr().out
         assert "Found" not in output
@@ -160,7 +178,7 @@ class TestMain:
         mock_fetch.return_value = tweets
         mock_existing.return_value = {"1", "2"}
 
-        main()
+        main([])
 
         mock_categorize.assert_not_called()
         output = capsys.readouterr().out
@@ -189,7 +207,7 @@ class TestMain:
         mock_categorize.return_value = (categorized, {"input_tokens": 50, "output_tokens": 25})
         mock_write.return_value = _write_stats(1, filenames=["hello.md"])
 
-        main()
+        main([])
 
         mock_categorize.assert_called_once_with((tweet_new,), api_key="sk-test", output_dir=tmp_path)
         output = capsys.readouterr().out
@@ -218,11 +236,79 @@ class TestMain:
         mock_categorize.return_value = (categorized, {"input_tokens": 50, "output_tokens": 25})
         mock_write.return_value = _write_stats(2, filenames=["a.md", "b.md"])
 
-        main()
+        main([])
 
         output = capsys.readouterr().out
         assert "AI Coding: 1" in output
         assert "ML Research: 1" in output
+
+    @patch("src.main.delete_bookmark")
+    @patch("src.main.load_config")
+    def test_removal_dry_run_does_not_delete_or_archive(self, mock_config, mock_delete, tmp_path, capsys):
+        mock_config.return_value = _make_config(tmp_path)
+        _write_note(tmp_path / "note.md", "123", "true")
+
+        main(["--remove-synthesized-bookmarks", "--dry-run"])
+
+        mock_delete.assert_not_called()
+        assert (tmp_path / "note.md").exists()
+        assert not (tmp_path / "archive").exists()
+        output = capsys.readouterr().out
+        assert "Dry run" in output
+
+    @patch("src.main.delete_bookmark")
+    @patch("src.main.load_config")
+    def test_removal_confirmed_deletes_and_archives(self, mock_config, mock_delete, tmp_path):
+        mock_config.return_value = _make_config(tmp_path)
+        mock_delete.return_value = DeleteBookmarkResult(tweet_id="123")
+        _write_note(tmp_path / "note.md", "123", "true")
+
+        main(["--remove-synthesized-bookmarks", "--confirm"])
+
+        mock_delete.assert_called_once()
+        assert not (tmp_path / "note.md").exists()
+        assert (tmp_path / "archive" / "note.md").exists()
+
+    @patch("builtins.input", return_value="n")
+    @patch("src.main.delete_bookmark")
+    @patch("src.main.load_config")
+    def test_removal_rejected_prompt_exits_without_delete(
+        self, mock_config, mock_delete, mock_input, tmp_path,
+    ):
+        mock_config.return_value = _make_config(tmp_path)
+        _write_note(tmp_path / "note.md", "123", "true")
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(["--remove-synthesized-bookmarks"])
+
+        assert exc_info.value.code == 1
+        mock_delete.assert_not_called()
+        assert (tmp_path / "note.md").exists()
+
+    @patch("src.main.delete_bookmark")
+    @patch("src.main.write_bookmarks")
+    @patch("src.main.categorize_tweets")
+    @patch("src.main.read_existing_ids")
+    @patch("src.main.fetch_bookmarks")
+    @patch("src.main.load_config")
+    def test_normal_sync_never_deletes_or_archives(
+        self, mock_config, mock_fetch, mock_existing, mock_categorize, mock_write, mock_delete, tmp_path,
+    ):
+        mock_config.return_value = _make_config(tmp_path)
+        mock_existing.return_value = set()
+        tweets = (_make_tweet("1"),)
+        mock_fetch.return_value = tweets
+        cat = Category(slug="general", display_name="General", sub_category="Uncategorized")
+        mock_categorize.return_value = (
+            (CategorizedTweet(tweet=tweets[0], category=cat, title="Hello"),),
+            {"input_tokens": 1, "output_tokens": 1},
+        )
+        mock_write.return_value = _write_stats(1, filenames=["hello.md"])
+
+        main([])
+
+        mock_delete.assert_not_called()
+        assert not (tmp_path / "archive").exists()
 
 
 class TestRunHistory:
@@ -232,7 +318,7 @@ class TestRunHistory:
         mock_config.return_value = _make_config(tmp_path)
         mock_fetch.return_value = ()
 
-        main()
+        main([])
 
         history_path = tmp_path / _HISTORY_FILENAME
         assert history_path.exists()
@@ -249,7 +335,7 @@ class TestRunHistory:
         mock_fetch.return_value = (_make_tweet("1"),)
         mock_existing.return_value = {"1"}
 
-        main()
+        main([])
 
         history_path = tmp_path / _HISTORY_FILENAME
         record = json.loads(history_path.read_text().strip())
@@ -276,7 +362,7 @@ class TestRunHistory:
         mock_categorize.return_value = (categorized, {"input_tokens": 10, "output_tokens": 5})
         mock_write.return_value = _write_stats(1, filenames=["hello.md"])
 
-        main()
+        main([])
 
         history_path = tmp_path / _HISTORY_FILENAME
         record = json.loads(history_path.read_text().strip())
@@ -309,8 +395,8 @@ class TestRunHistory:
         mock_categorize.return_value = (categorized, {"input_tokens": 10, "output_tokens": 5})
         mock_write.return_value = _write_stats(1, filenames=["a.md"])
 
-        main()
-        main()
+        main([])
+        main([])
 
         history_path = tmp_path / _HISTORY_FILENAME
         lines = history_path.read_text().strip().split("\n")

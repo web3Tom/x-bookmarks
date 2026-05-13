@@ -21,6 +21,12 @@
 - [x] **subCategory frontmatter field** — added `subCategory` (camelCase) to frontmatter for finer-grained Dataview queries
 - [x] **Body structure alignment** — restructured note body to `## {title}` / `## References` sections (initial v1.2 used `## Notes`; subsequently replaced with `## {title}` for descriptive headings; `migrate.py` exists to backfill old files)
 
+### v1.3 — Synthesized Bookmark Removal
+- [x] **Strict synthesized marker** — generated and backfilled active notes include `synthesized: false`; only exact `synthesized: true` is eligible for X-side removal
+- [x] **Explicit removal mode** — `uv run x-bookmarks --remove-synthesized-bookmarks` scans existing notes without fetching bookmarks or calling Claude
+- [x] **Destructive-mode safeguards** — live deletion requires confirmation, supports `--dry-run`, caps live runs at 50 deletions, and reports missing `bookmark.write` scope on 403
+- [x] **Archive and history records** — successful or already-absent removals add `bookmark_removed` metadata, move notes to `output_dir / "archive"`, and append removal records to `.x-bookmarks-history.jsonl`
+
 ## Planned
 
 Items are grouped into execution tiers in priority order. Each links to the corresponding GitHub issue in [`docs/github-issues.md`](github-issues.md). Priority reflects safety-first sequencing: credential hardening and dev-safety scaffolding precede content features.

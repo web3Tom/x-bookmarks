@@ -39,11 +39,14 @@ If neither variable is exported in the process environment, the CLI also reads s
 6. Write one Markdown note per bookmark.
 7. Append structured run metadata to `.x-bookmarks-history.jsonl`.
 
+Removal mode is separate from this flow. `uv run x-bookmarks --remove-synthesized-bookmarks` scans existing active notes, removes eligible X bookmarks, annotates successful removals, and archives the notes without fetching bookmarks or calling Claude.
+
 ## Main Components
 
 ### Authentication
 
 [`src/auth_helper.py`](x-bookmarks/src/auth_helper.py) opens a browser-based OAuth flow, exchanges the code for tokens, fetches the authenticated user ID, and writes credentials to `.env`.
+The OAuth scope list includes `bookmark.write` for explicit removal mode. Users who authenticated before that scope was added must re-run `uv run x-bookmarks-auth`; refresh tokens cannot upgrade scope in place.
 When rewriting `.env`, it preserves local non-token config for `ANTHROPIC_API_KEY` and `KNOWLEDGE_BASE_DIR`; if only `KNOWLEDGE_DIR` is present, it writes that value back as `KNOWLEDGE_BASE_DIR`.
 
 ### Configuration
@@ -86,18 +89,27 @@ If Claude returns no mapping for a tweet, the current code still falls back inte
 
 ```yaml
 ---
-title: 'LangGraph Agent Memory Patterns'
-author: '@handle'
-category: 'AI Coding'
-subCategory: 'Coding Workflows'
+title: "LangGraph Agent Memory Patterns"
+author: "@handle"
+category: "AI Coding"
+subCategory: "Coding Workflows"
 date: 2026-02-23
 read: false
-type: 'post'
-tweet_url: 'https://x.com/handle/status/123456789'
+synthesized: false
+type: "post"
+tweet_url: "https://x.com/handle/status/123456789"
 ---
 ```
 
 Posts use blockquoted tweet text. Articles write article content directly. Both include `## References`.
+
+### Synthesized Bookmark Removal
+
+[`src/removal.py`](x-bookmarks/src/removal.py) implements the destructive removal workflow. It backfills active notes missing `synthesized` with `synthesized: false`, then treats only exact lowercase `synthesized: true` as eligible.
+
+For each eligible note, the CLI calls `DELETE /2/users/{id}/bookmarks/{tweet_id}` through [`src/api_client.py`](x-bookmarks/src/api_client.py). `404` is treated as idempotent success because the bookmark is already absent. After success, the note gets `bookmark_removed: true` and `bookmark_removed_at: YYYY-MM-DDTHH:MM:SSZ`, then moves to `output_dir / "archive"`.
+
+Archived notes are intentionally excluded from active deduplication because `read_existing_ids` scans only `output_dir/*.md`. If the same tweet is bookmarked again later, normal sync can write a new active note.
 
 ### Migration
 
@@ -109,6 +121,8 @@ Posts use blockquoted tweet text. Articles write article content directly. Both 
 | --------------------------------------------- | -------------------------------------- |
 | `uv run x-bookmarks-auth`                     | Run OAuth setup                        |
 | `uv run x-bookmarks`                          | Fetch, categorize, and write bookmarks |
+| `uv run x-bookmarks --remove-synthesized-bookmarks --dry-run` | Preview strict synthesized removals |
+| `uv run x-bookmarks --remove-synthesized-bookmarks --confirm` | Remove eligible X bookmarks and archive notes |
 | `uv run x-bookmarks-migrate /path/to/x-posts` | Migrate older bookmark notes           |
 
 ## Current Constraints
@@ -117,6 +131,7 @@ Posts use blockquoted tweet text. Articles write article content directly. Both 
 - Requires a valid Anthropic API key.
 - Stores tokens locally in plaintext `.env`.
 - Assumes an Obsidian-oriented output structure.
+- Destructive bookmark removal requires `bookmark.write` and explicit confirmation.
 - Uses a single Claude request per run today; large runs are a roadmap item for chunking.
 - The X API has a known pagination bug that caps retrieval at approximately 300 bookmarks (~3 pages) even when the user has more. Run the tool regularly to keep new bookmarks within the retrievable window.
 - There is no early-stop optimization during fetching; all pages are fetched before dedup runs.
