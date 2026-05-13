@@ -62,6 +62,32 @@ class TestConfig:
         config = load_config(env_path=minimal_env)
         assert config.output_dir == Path("/tmp/custom-kb")
 
+    def test_output_dir_from_legacy_env_fallback(self, minimal_env, monkeypatch):
+        monkeypatch.delenv("KNOWLEDGE_BASE_DIR", raising=False)
+        monkeypatch.setenv("KNOWLEDGE_DIR", "/tmp/legacy-kb")
+        config = load_config(env_path=minimal_env)
+        assert config.output_dir == Path("/tmp/legacy-kb")
+
+    def test_output_dir_from_local_envrc_fallback(self, minimal_env, monkeypatch, tmp_path):
+        monkeypatch.delenv("KNOWLEDGE_BASE_DIR", raising=False)
+        monkeypatch.delenv("KNOWLEDGE_DIR", raising=False)
+        (tmp_path / ".envrc.local").write_text('export KNOWLEDGE_BASE_DIR="/tmp/envrc-kb"\n')
+        config = load_config(env_path=minimal_env)
+        assert config.output_dir == Path("/tmp/envrc-kb")
+
+    def test_output_dir_from_legacy_local_envrc_fallback(self, minimal_env, monkeypatch, tmp_path):
+        monkeypatch.delenv("KNOWLEDGE_BASE_DIR", raising=False)
+        monkeypatch.delenv("KNOWLEDGE_DIR", raising=False)
+        (tmp_path / ".envrc.local").write_text("export KNOWLEDGE_DIR=/tmp/legacy-envrc-kb\n")
+        config = load_config(env_path=minimal_env)
+        assert config.output_dir == Path("/tmp/legacy-envrc-kb")
+
+    def test_output_dir_prefers_canonical_env(self, minimal_env, monkeypatch):
+        monkeypatch.setenv("KNOWLEDGE_BASE_DIR", "/tmp/custom-kb")
+        monkeypatch.setenv("KNOWLEDGE_DIR", "/tmp/legacy-kb")
+        config = load_config(env_path=minimal_env)
+        assert config.output_dir == Path("/tmp/custom-kb")
+
     def test_output_dir_expands_tilde(self, minimal_env, monkeypatch):
         monkeypatch.setenv("KNOWLEDGE_BASE_DIR", "~/my-kb")
         config = load_config(env_path=minimal_env)
@@ -99,6 +125,7 @@ class TestConfig:
         monkeypatch.setenv("REFRESH_TOKEN", "r")
         monkeypatch.setenv("USER_ID", "u")
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setattr("src.config._resolve_anthropic_key_from_pass", lambda: "")
         with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
             load_config(env_path=env_file)
 

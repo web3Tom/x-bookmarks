@@ -117,7 +117,7 @@ class TestMain:
         main()
 
         output = capsys.readouterr().out
-        assert "Found 1 article(s) (1 with content from API)" in output
+        assert "1 of 2 new bookmark(s) link to articles (1 with content from API)" in output
 
     @patch("src.main.write_bookmarks")
     @patch("src.main.categorize_tweets")
@@ -143,7 +143,7 @@ class TestMain:
 
         output = capsys.readouterr().out
         assert "Found" not in output
-        assert "article" not in output.lower().split("categorizing")[0]
+        assert "new bookmark(s) link to articles" not in output
 
     @patch("src.main.categorize_tweets")
     @patch("src.main.read_existing_ids")

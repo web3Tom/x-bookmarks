@@ -18,6 +18,9 @@ USERS_ME_URL = "https://api.x.com/2/users/me"
 CALLBACK_PORT = 8000
 REDIRECT_URI = f"http://127.0.0.1:{CALLBACK_PORT}/callback"
 SCOPES = "tweet.read users.read bookmark.read offline.access"
+_OUTPUT_DIR_ENV = "KNOWLEDGE_BASE_DIR"
+_LEGACY_OUTPUT_DIR_ENV = "KNOWLEDGE_DIR"
+_LOCAL_ENVRC_FILENAME = ".envrc.local"
 
 
 def _generate_pkce() -> tuple[str, str]:
@@ -96,15 +99,69 @@ def _fetch_user_id(access_token: str) -> str:
         return resp.json()["data"]["id"]
 
 
+def _read_env_file_value(env_path: Path, key: str) -> str:
+    """Read a simple KEY=value entry from .env without expanding values."""
+    if not env_path.exists():
+        return ""
+    for line in env_path.read_text().splitlines():
+        if line.startswith(f"{key}="):
+            return line.split("=", 1)[1].strip()
+    return ""
+
+
+def _read_local_envrc_value(envrc_path: Path, key: str) -> str:
+    """Read a simple export KEY=value entry from a local direnv override file."""
+    if not envrc_path.exists():
+        return ""
+
+    for raw_line in envrc_path.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].strip()
+        if not line.startswith(f"{key}="):
+            continue
+
+        value = line.split("=", 1)[1].strip()
+        if (
+            len(value) >= 2
+            and value[0] == value[-1]
+            and value[0] in {'"', "'"}
+        ):
+            value = value[1:-1]
+        return os.path.expandvars(value)
+
+    return ""
+
+
+def _resolve_output_dir_value(env_path: Path) -> str:
+    """Return the output dir value to persist in .env, if one is configured."""
+    envrc_path = env_path.with_name(_LOCAL_ENVRC_FILENAME)
+    return (
+        os.environ.get(_OUTPUT_DIR_ENV, "").strip()
+        or _read_env_file_value(env_path, _OUTPUT_DIR_ENV)
+        or os.environ.get(_LEGACY_OUTPUT_DIR_ENV, "").strip()
+        or _read_env_file_value(env_path, _LEGACY_OUTPUT_DIR_ENV)
+        or _read_local_envrc_value(envrc_path, _OUTPUT_DIR_ENV)
+        or _read_local_envrc_value(envrc_path, _LEGACY_OUTPUT_DIR_ENV)
+    )
+
+
 def _write_env(client_id: str, access_token: str, refresh_token: str, user_id: str) -> None:
-    """Write credentials to .env file."""
+    """Write credentials to .env file while preserving local non-token config."""
     env_path = Path(".env")
 
-    anthropic_key = ""
-    if env_path.exists():
-        for line in env_path.read_text().splitlines():
-            if line.startswith("ANTHROPIC_API_KEY="):
-                anthropic_key = line.split("=", 1)[1].strip()
+    anthropic_key = _read_env_file_value(env_path, "ANTHROPIC_API_KEY")
+    output_dir = _resolve_output_dir_value(env_path)
+
+    output_lines = [
+        "# Output directory for generated bookmark notes (default: ~/x-bookmarks-data)",
+    ]
+    if output_dir:
+        output_lines.append(f"{_OUTPUT_DIR_ENV}={output_dir}")
+    else:
+        output_lines.append(f"# {_OUTPUT_DIR_ENV}=")
 
     env_path.write_text(
         f"# X API OAuth 2.0 credentials\n"
@@ -116,6 +173,9 @@ def _write_env(client_id: str, access_token: str, refresh_token: str, user_id: s
         f"\n"
         f"# Anthropic API\n"
         f"ANTHROPIC_API_KEY={anthropic_key}\n"
+        f"\n"
+        + "\n".join(output_lines)
+        + "\n"
     )
 
 

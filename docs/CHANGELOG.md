@@ -3,6 +3,16 @@
 Reverse-chronological log of session-level outcomes for this repository.
 Newest entry at the top. Long-form reasoning lives in the author's external spec system, not here.
 
+## 2026-05-13
+
+**Output directory persistence**
+
+- `x-bookmarks-auth` now preserves local output configuration when it rewrites `.env` after OAuth, preventing `KNOWLEDGE_BASE_DIR` from being dropped during re-authentication.
+- `src/config.py` now accepts `KNOWLEDGE_DIR` as a compatibility fallback while keeping `KNOWLEDGE_BASE_DIR` canonical.
+- `src/config.py` also reads simple `KNOWLEDGE_BASE_DIR` / `KNOWLEDGE_DIR` assignments from ignored `.envrc.local`, so `uv run x-bookmarks` does not depend on direnv having exported the variable.
+- `src/main.py` now logs the resolved output directory before fetching bookmarks to make configuration mistakes visible before categorization.
+- Updated README and overview docs to explain one-time output directory setup and the privacy expectation for machine-specific paths.
+
 ## 2026-05-11
 
 **`pass` vault fallback for `ANTHROPIC_API_KEY`**

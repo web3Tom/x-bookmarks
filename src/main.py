@@ -88,6 +88,7 @@ def main() -> None:
         print("Run 'x-bookmarks-auth' to set up credentials, or check .env file.")
         sys.exit(1)
 
+    print(f"[{run_id}] Output directory: {config.output_dir}")
     print(f"[{run_id}] Fetching bookmarks for user {config.user_id}...")
     tweets = fetch_bookmarks(config)
 

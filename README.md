@@ -44,7 +44,7 @@ This opens a browser for OAuth 2.0 PKCE authorization and writes the returned cr
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-### 5. Set your output location
+### 5. Set your output location once
 
 Set `KNOWLEDGE_BASE_DIR` in `.env` to the directory where you want bookmark notes written.
 
@@ -53,6 +53,9 @@ KNOWLEDGE_BASE_DIR=/path/to/your/notes
 ```
 
 If `KNOWLEDGE_BASE_DIR` is unset, the tool defaults to `~/x-bookmarks-data`.
+The OAuth helper preserves this setting when it refreshes `.env`, so you do not need to re-export or re-add it after running `x-bookmarks-auth`.
+If a private shell setup already exports `KNOWLEDGE_DIR`, the CLI can use it as a fallback and `x-bookmarks-auth` will write it back as the canonical `KNOWLEDGE_BASE_DIR` entry in local `.env`.
+The CLI also reads simple `export KNOWLEDGE_BASE_DIR=...` entries from ignored `.envrc.local`, so the configured output directory still works when direnv has not populated the current shell.
 
 ### 6. Run the pipeline
 
@@ -127,7 +130,8 @@ uv run pytest --cov=src --cov-report=term-missing
 
 ## Security Notes
 
-- OAuth tokens and your Anthropic API key are stored locally in `.env`.
+- OAuth tokens and local configuration are stored in `.env`.
 - `.env` is ignored by Git, but you should still review `git status` before every push.
 - The repository does not currently encrypt local token storage.
+- `KNOWLEDGE_BASE_DIR` may contain a machine-specific path. Keep it in `.env` or `.envrc.local`, not in committed docs or code.
 - If `ANTHROPIC_API_KEY` is unset (or blank) after loading `.env`, the loader falls back to fetching it from the user's [`pass`](https://www.passwordstore.org/) store at `ai/anthropic/api-key`. This lets you keep the key out of `.env` entirely and still run the tool through a `direnv`/`pass` workflow. The fallback is silently skipped if `pass` is not installed.

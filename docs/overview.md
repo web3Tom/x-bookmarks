@@ -20,11 +20,14 @@ Project URL:
 | Setting            | Value                               |
 | ------------------ | ----------------------------------- |
 | Env var            | `KNOWLEDGE_BASE_DIR`                |
+| Fallback env var   | `KNOWLEDGE_DIR`                     |
 | Default            | `~/x-bookmarks-data`               |
 | Filename format    | `{title-slug}.md`                   |
 | Collision handling | Numeric suffixes such as `-2`, `-3` |
 
 `KNOWLEDGE_BASE_DIR` is the exact directory where notes are written. No subdirectory is appended.
+`KNOWLEDGE_DIR` is accepted as a compatibility fallback, but `KNOWLEDGE_BASE_DIR` remains the canonical public setting.
+If neither variable is exported in the process environment, the CLI also reads simple assignments from ignored `.envrc.local`.
 
 ## Core Flow
 
@@ -41,10 +44,12 @@ Project URL:
 ### Authentication
 
 [`src/auth_helper.py`](x-bookmarks/src/auth_helper.py) opens a browser-based OAuth flow, exchanges the code for tokens, fetches the authenticated user ID, and writes credentials to `.env`.
+When rewriting `.env`, it preserves local non-token config for `ANTHROPIC_API_KEY` and `KNOWLEDGE_BASE_DIR`; if only `KNOWLEDGE_DIR` is present, it writes that value back as `KNOWLEDGE_BASE_DIR`.
 
 ### Configuration
 
 [`src/config.py`](x-bookmarks/src/config.py) loads `CLIENT_ID`, `ACCESS_TOKEN`, `REFRESH_TOKEN`, `USER_ID`, `ANTHROPIC_API_KEY`, and the optional `KNOWLEDGE_BASE_DIR`.
+For output directory resolution, exported `KNOWLEDGE_BASE_DIR` takes precedence over exported `KNOWLEDGE_DIR`, then local `.envrc.local` entries are checked in the same order; if none are set, the default is `~/x-bookmarks-data`.
 
 ### Bookmark Fetching
 
