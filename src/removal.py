@@ -19,7 +19,7 @@ from src.api_client import (
 _SYNTHESIZED_PATTERN = re.compile(r"^synthesized:\s*(.*)$", re.MULTILINE)
 _SYNTHESIZED_CASE_PATTERN = re.compile(r"^([A-Za-z_]+):\s*.*$", re.MULTILINE)
 _TWEET_URL_ID_PATTERN = re.compile(
-    r'^tweet_url:\s*"https://x\.com/\S+/status/(\d+)"', re.MULTILINE
+    r'^tweet_url:\s*"?https://x\.com/\S+/status/(\d+)"?', re.MULTILINE
 )
 _MAX_LIVE_REMOVALS = 50
 
