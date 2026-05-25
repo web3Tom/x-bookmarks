@@ -71,6 +71,7 @@ synthesized: false
 type: "post" # or "article"
 tweet_url: "https://x.com/..."
 article_url: "https://..." # optional — articles only
+tags: ["framework/langgraph"] # optional — entity tags (present only when configured)
 ---
 ```
 
@@ -81,6 +82,12 @@ Rules:
 - deprecated fields must not be reintroduced
 - the first `##` heading in generated note bodies must match the frontmatter title exactly
 - use `## References` for outbound links
+
+## Category Taxonomy
+
+Categorization taxonomy logic lives in `src/taxonomy.py`, shared by `src/categorizer.py` and `src/migrate.py` (do not reintroduce per-module `_build_taxonomy_block` duplicates). Categories are derived from existing vault frontmatter, unioned with an optional user override file (`X_BOOKMARKS_TAXONOMY_FILE`), and fall back to the neutral built-in `DEFAULT_TAXONOMY` only when both are empty. The override file may also declare deprecated categories, freeform guidance appended to the prompt, and optional entity tags for lateral tagging. There is no hardcoded fixed category list; the shipped default must stay domain-neutral.
+
+Entity tags (`entity_tags` frontmatter dict in override file) enable lateral tagging of specific tools, frameworks, models, and concepts. Tags use the format `prefix/entity-name` (e.g., `framework/langgraph`, `model/deepseek`). Entity tags are gated on configuration: when absent/empty, no tags are requested and the `tags:` frontmatter field is omitted. Allowed prefixes are closed (keys of the configured dict), but entities under those prefixes are open (Claude can discover new ones). Unknown-prefix tags are dropped during normalization.
 
 ## X Bookmark Removal Safety
 
