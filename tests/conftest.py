@@ -83,3 +83,37 @@ def tmp_output_dir(tmp_path):
     output = tmp_path / "vault" / "x"
     output.mkdir(parents=True)
     return output
+
+
+@pytest.fixture
+def valid_override_file(tmp_path):
+    """Create a valid taxonomy override file."""
+    override_file = tmp_path / "taxonomy.md"
+    override_file.write_text(
+        "---\n"
+        "taxonomy:\n"
+        "  AI:\n"
+        "    - Coding\n"
+        "    - Reasoning\n"
+        "  Business:\n"
+        "    - Finance\n"
+        "deprecate:\n"
+        "  - General\n"
+        "  - Uncategorized\n"
+        "---\n\n"
+        "## Domain Guidance\n\n"
+        "Prefer AI and Business categories for bookmarks.\n"
+    )
+    return override_file
+
+
+@pytest.fixture
+def malformed_override_file(tmp_path):
+    """Create a malformed taxonomy override file."""
+    override_file = tmp_path / "bad_taxonomy.md"
+    override_file.write_text(
+        "---\n"
+        "taxonomy: [invalid list, not dict\n"
+        "---\n"
+    )
+    return override_file

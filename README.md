@@ -58,6 +58,16 @@ The OAuth helper preserves this setting when it refreshes `.env`, so you do not 
 If a private shell setup already exports `KNOWLEDGE_DIR`, the CLI can use it as a fallback and `x-bookmarks-auth` will write it back as the canonical `KNOWLEDGE_BASE_DIR` entry in local `.env`.
 The CLI also reads simple `export KNOWLEDGE_BASE_DIR=...` entries from ignored `.envrc.local`, so the configured output directory still works when direnv has not populated the current shell.
 
+#### Optional: customize the category taxonomy
+
+By default the categorizer reuses the categories already present in your vault and falls back to a neutral built-in taxonomy on an empty vault. To steer categorization with your own categories, point `X_BOOKMARKS_TAXONOMY_FILE` at a Markdown override file:
+
+```dotenv
+X_BOOKMARKS_TAXONOMY_FILE=/path/to/taxonomy.md
+```
+
+The override's categories are merged (union) with your vault's, an optional `deprecate:` list steers Claude away from unwanted categories, and an optional guidance body is appended to the prompt. See [`docs/taxonomy.md`](docs/taxonomy.md) for the full format and [`taxonomy.example.md`](taxonomy.example.md) for a copyable template. The same file works with `migrate.py --taxonomy-file` for bulk re-categorization.
+
 ### 6. Run the pipeline
 
 ```bash

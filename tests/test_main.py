@@ -27,6 +27,7 @@ def _make_config(tmp_path: Path) -> Config:
         access_token="a", refresh_token="r",
         user_id="999", anthropic_api_key="sk-test",
         output_dir=tmp_path,
+        taxonomy_file=None,
     )
 
 
@@ -79,7 +80,7 @@ class TestMain:
         main([])
 
         mock_fetch.assert_called_once_with(config)
-        mock_categorize.assert_called_once_with(tweets, api_key="sk-test", output_dir=tmp_path)
+        mock_categorize.assert_called_once_with(tweets, api_key="sk-test", output_dir=tmp_path, override_file=None)
         mock_write.assert_called_once_with(categorized, tmp_path)
 
         output = capsys.readouterr().out
@@ -209,7 +210,7 @@ class TestMain:
 
         main([])
 
-        mock_categorize.assert_called_once_with((tweet_new,), api_key="sk-test", output_dir=tmp_path)
+        mock_categorize.assert_called_once_with((tweet_new,), api_key="sk-test", output_dir=tmp_path, override_file=None)
         output = capsys.readouterr().out
         assert "Skipping 1 already-saved" in output
         assert "Categorizing 1 new bookmark(s)" in output

@@ -38,6 +38,7 @@ def config(tmp_path):
         user_id="999",
         anthropic_api_key="sk-ant-test",
         output_dir=tmp_path,
+        taxonomy_file=None,
     )
 
 

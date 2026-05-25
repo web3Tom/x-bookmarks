@@ -55,7 +55,13 @@ def _escape_yaml_string(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def _build_frontmatter(tweet: Tweet, category: Category, bookmark_type: str, title: str) -> str:
+def _build_frontmatter(
+    tweet: Tweet,
+    category: Category,
+    bookmark_type: str,
+    title: str,
+    tags: tuple[str, ...] = (),
+) -> str:
     """YAML block with all metadata fields."""
     username = tweet.author.username if tweet.author else "unknown"
     date_str = tweet.created_at.strftime("%Y-%m-%d")
@@ -78,6 +84,12 @@ def _build_frontmatter(tweet: Tweet, category: Category, bookmark_type: str, tit
 
     if bookmark_type == "article" and tweet.article_url:
         lines.append(f'article_url: "{tweet.article_url}"')
+
+    # Add tags as YAML flow array if non-empty
+    if tags:
+        escaped_tags = [_escape_yaml_string(tag) for tag in tags]
+        tags_array = ", ".join(f'"{tag}"' for tag in escaped_tags)
+        lines.append(f"tags: [{tags_array}]")
 
     lines.append("---")
     return "\n".join(lines) + "\n"
@@ -184,7 +196,7 @@ def write_bookmarks(
         filename = _build_filename(ct.title, existing_names)
         existing_names.add(filename)
 
-        frontmatter = _build_frontmatter(tweet, ct.category, bookmark_type, ct.title)
+        frontmatter = _build_frontmatter(tweet, ct.category, bookmark_type, ct.title, ct.tags)
         frontmatter = _validate_frontmatter(frontmatter)
         body = _format_article_body(tweet, ct.title) if is_article else _format_post_body(tweet, ct.title)
 

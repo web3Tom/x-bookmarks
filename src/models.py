@@ -83,6 +83,7 @@ class CategorizedTweet:
     tweet: Tweet
     category: Category
     title: str
+    tags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

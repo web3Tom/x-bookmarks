@@ -1,7 +1,7 @@
 import pytest
 from pathlib import Path
 
-from src.config import Config, load_config
+from src.config import Config, load_config, resolve_taxonomy_file
 
 
 @pytest.fixture
@@ -140,3 +140,58 @@ class TestConfig:
         monkeypatch.delenv("CLIENT_SECRET", raising=False)
         config = load_config(env_path=env_file)
         assert config.client_secret is None
+
+    def test_config_includes_taxonomy_file(self, minimal_env):
+        config = load_config(env_path=minimal_env)
+        assert hasattr(config, "taxonomy_file")
+
+    def test_taxonomy_file_none_by_default(self, minimal_env, monkeypatch):
+        monkeypatch.delenv("X_BOOKMARKS_TAXONOMY_FILE", raising=False)
+        config = load_config(env_path=minimal_env)
+        assert config.taxonomy_file is None
+
+
+class TestResolveTaxonomyFile:
+    def test_returns_none_when_unset(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("X_BOOKMARKS_TAXONOMY_FILE", raising=False)
+        result = resolve_taxonomy_file(tmp_path)
+        assert result is None
+
+    def test_returns_none_when_file_missing(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("X_BOOKMARKS_TAXONOMY_FILE", "/nonexistent/taxonomy.md")
+        result = resolve_taxonomy_file(tmp_path)
+        assert result is None
+
+    def test_resolves_from_env_var(self, tmp_path, monkeypatch):
+        taxonomy_file = tmp_path / "taxonomy.md"
+        taxonomy_file.write_text("---\ntaxonomy: {}\n---\n")
+        monkeypatch.setenv("X_BOOKMARKS_TAXONOMY_FILE", str(taxonomy_file))
+        result = resolve_taxonomy_file(tmp_path)
+        assert result == taxonomy_file
+
+    def test_resolves_from_envrc_local(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("X_BOOKMARKS_TAXONOMY_FILE", raising=False)
+        taxonomy_file = tmp_path / "taxonomy.md"
+        taxonomy_file.write_text("---\ntaxonomy: {}\n---\n")
+        (tmp_path / ".envrc.local").write_text(f'export X_BOOKMARKS_TAXONOMY_FILE="{taxonomy_file}"\n')
+        result = resolve_taxonomy_file(tmp_path)
+        assert result == taxonomy_file
+
+    def test_expands_tilde(self, tmp_path, monkeypatch, home_dir=None):
+        # Create a temporary taxonomy file in a test location
+        taxonomy_file = tmp_path / "taxonomy.md"
+        taxonomy_file.write_text("---\ntaxonomy: {}\n---\n")
+        monkeypatch.setenv("X_BOOKMARKS_TAXONOMY_FILE", str(taxonomy_file))
+        result = resolve_taxonomy_file(tmp_path)
+        assert result.is_absolute()
+
+    def test_prefers_env_var_over_envrc(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("X_BOOKMARKS_TAXONOMY_FILE", raising=False)
+        env_file = tmp_path / "env-taxonomy.md"
+        env_file.write_text("---\ntaxonomy: {}\n---\n")
+        envrc_file = tmp_path / "envrc-taxonomy.md"
+        envrc_file.write_text("---\ntaxonomy: {}\n---\n")
+        monkeypatch.setenv("X_BOOKMARKS_TAXONOMY_FILE", str(env_file))
+        (tmp_path / ".envrc.local").write_text(f'export X_BOOKMARKS_TAXONOMY_FILE="{envrc_file}"\n')
+        result = resolve_taxonomy_file(tmp_path)
+        assert result == env_file

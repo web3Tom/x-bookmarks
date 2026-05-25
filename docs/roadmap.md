@@ -17,7 +17,7 @@
 - [x] `KNOWLEDGE_BASE_DIR` env var — configurable knowledge base root path
 
 ### v1.2 — Taxonomy Alignment
-- [x] **Align taxonomy with AGENTS.md** — enforce the fixed 10-category AI taxonomy in the Claude system prompt instead of free-form categorization
+- [x] **Align taxonomy with AGENTS.md** — *(superseded in v1.4)* originally enforced a fixed 10-category AI taxonomy in the Claude system prompt; this was later replaced by the dynamic, vault-derived approach and is now formalized in v1.4 with a neutral built-in default plus an optional user override
 - [x] **subCategory frontmatter field** — added `subCategory` (camelCase) to frontmatter for finer-grained Dataview queries
 - [x] **Body structure alignment** — restructured note body to `## {title}` / `## References` sections (initial v1.2 used `## Notes`; subsequently replaced with `## {title}` for descriptive headings; `migrate.py` exists to backfill old files)
 
@@ -26,6 +26,20 @@
 - [x] **Explicit removal mode** — `uv run x-bookmarks --remove-synthesized-bookmarks` scans existing notes without fetching bookmarks or calling Claude
 - [x] **Destructive-mode safeguards** — live deletion requires confirmation, supports `--dry-run`, caps live runs at 50 deletions, and reports missing `bookmark.write` scope on 403
 - [x] **Archive and history records** — successful or already-absent removals add `bookmark_removed` metadata, move notes to `output_dir / "archive"`, and append removal records to `.x-bookmarks-history.jsonl`
+
+### v1.4 — Configurable Taxonomy
+- [x] **Centralized taxonomy module** — `src/taxonomy.py` holds `DEFAULT_TAXONOMY`, override loading, merge, and the shared `build_taxonomy_section`; removes duplication between `categorizer.py` and `migrate.py`
+- [x] **Neutral built-in default** — domain-agnostic `DEFAULT_TAXONOMY` used only when both vault and override are empty (no catch-all bucket)
+- [x] **Optional override file** — `X_BOOKMARKS_TAXONOMY_FILE` (env or `.envrc.local`): frontmatter `taxonomy:` merged (union) with vault categories, `deprecate:` list steers Claude away, Markdown body appended as prompt guidance
+- [x] **Migration support** — `migrate.py --taxonomy-file` with independent resolution (no X API credentials required)
+
+### v1.5 — Entity Tagging Layer
+- [x] **Entity tags parsing** — `entity_tags` frontmatter key in override file, dict of prefix → list of known entities
+- [x] **Gated tagging** — tags only appear when `entity_tags` is configured (non-empty); preserves zero-config UX when omitted
+- [x] **Closed-prefix governance** — allowed prefixes are keys of `entity_tags` dict; unknown-prefix tags dropped, open entities (new discoveries) preserved
+- [x] **Tags frontmatter array** — YAML flow array `tags: ["prefix/entity"]`, omitted when empty
+- [x] **Lateral tagging in categorization** — Claude extracts tags alongside Category/Subcategory in both `categorizer.py` and `migrate.py`
+- [x] **Migration backward compatibility** — existing tags preserved in migrated files when Claude returns no new tags
 
 ## Planned
 

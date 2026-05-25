@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
@@ -8,10 +9,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+logger = logging.getLogger(__name__)
 
 _REQUIRED = ("CLIENT_ID", "ACCESS_TOKEN", "REFRESH_TOKEN", "USER_ID", "ANTHROPIC_API_KEY")
 _OUTPUT_DIR_ENV = "KNOWLEDGE_BASE_DIR"
 _LEGACY_OUTPUT_DIR_ENV = "KNOWLEDGE_DIR"
+_TAXONOMY_FILE_ENV = "X_BOOKMARKS_TAXONOMY_FILE"
 _PASS_KEY_PATH = "ai/anthropic/api-key"
 _LOCAL_ENVRC_FILENAME = ".envrc.local"
 
@@ -75,6 +78,30 @@ def _resolve_output_dir(env_dir: Path) -> Path:
     return Path(output_dir).expanduser().resolve()
 
 
+def resolve_taxonomy_file(env_dir: Path) -> Path | None:
+    """Resolve the taxonomy override file from env var or .envrc.local.
+
+    Mirrors the pattern for _resolve_output_dir but returns None if unset.
+    Returns None if the resolved path does not exist.
+    Logs a warning and returns None on resolution failure.
+    Expands ~ and resolves to absolute path.
+    """
+    taxonomy_path = (
+        os.environ.get(_TAXONOMY_FILE_ENV)
+        or _read_local_envrc_value(_TAXONOMY_FILE_ENV, env_dir / _LOCAL_ENVRC_FILENAME)
+    )
+
+    if not taxonomy_path:
+        return None
+
+    resolved = Path(taxonomy_path).expanduser().resolve()
+    if not resolved.exists():
+        logger.warning("Taxonomy override file does not exist: %s", resolved)
+        return None
+
+    return resolved
+
+
 @dataclass(frozen=True)
 class Config:
     client_id: str
@@ -84,6 +111,7 @@ class Config:
     user_id: str
     anthropic_api_key: str
     output_dir: Path
+    taxonomy_file: Path | None
 
 
 def load_config(env_path: Path | None = None) -> Config:
@@ -112,4 +140,5 @@ def load_config(env_path: Path | None = None) -> Config:
         user_id=os.environ["USER_ID"],
         anthropic_api_key=os.environ["ANTHROPIC_API_KEY"],
         output_dir=_resolve_output_dir(env_dir),
+        taxonomy_file=resolve_taxonomy_file(env_dir),
     )

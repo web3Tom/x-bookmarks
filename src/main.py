@@ -374,7 +374,12 @@ def _run_sync(config, run_id: str, started_at: str, t_start: float) -> None:
 
     print(f"[{run_id}] Categorizing {len(novel)} new bookmark(s) with Claude...")
 
-    categorized, usage = categorize_tweets(novel, api_key=config.anthropic_api_key, output_dir=config.output_dir)
+    categorized, usage = categorize_tweets(
+        novel,
+        api_key=config.anthropic_api_key,
+        output_dir=config.output_dir,
+        override_file=config.taxonomy_file,
+    )
 
     print(f"[{run_id}] Writing to {config.output_dir}...")
     stats = write_bookmarks(categorized, config.output_dir)

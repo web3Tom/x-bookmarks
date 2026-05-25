@@ -3,6 +3,40 @@
 Reverse-chronological log of session-level outcomes for this repository.
 Newest entry at the top. Long-form reasoning lives in the author's external spec system, not here.
 
+## 2026-05-24
+
+**Taxonomy example populated from production vault**
+
+- Replaced the placeholder draft in `taxonomy.example.md` with the maintainer's real, in-production AI/engineering taxonomy: 7 domains (Agentic Systems, Development & Tooling, Models & Inference, Strategy & Ontology, Execution & Career, Security & Privacy, Society & Commentary) and 43 empirically-derived subcategories — the same scheme used to reshape a ~615-note bookmark vault.
+- Seeded `entity_tags` for all six prefixes from actual vault usage (e.g. `tool/claude-code`, `harness/hermes`, `concept/multi-agent`); expanded `deprecate:` to cover the legacy ad-hoc categories the new scheme replaced.
+- Added worked examples + disambiguation rules (harness vs framework vs coding-agent; agent-memory vs human-PKM; inference-substrate vs model) to the example's guidance body.
+- Refreshed `docs/taxonomy.md` illustrative examples to current category names (dropped now-deprecated `AI Coding`/`Agent Architectures`) and linked the example file from the overview. `DEFAULT_TAXONOMY` stays domain-neutral.
+
+**Configurable taxonomy overrides**
+
+- Added `src/taxonomy.py` centralizing taxonomy logic; removed the duplicated `_build_taxonomy_block` from `src/categorizer.py` and `src/migrate.py`.
+- Added a neutral, domain-agnostic `DEFAULT_TAXONOMY` (7 top-level categories, no catch-all bucket) used only when both the vault and any override are empty.
+- Added an optional override file via `X_BOOKMARKS_TAXONOMY_FILE` (resolved from env or `.envrc.local`): frontmatter `taxonomy:` is merged (union) with vault categories, `deprecate:` steers Claude away from unwanted categories, and the Markdown body is appended to the system prompt as domain guidance.
+- Added `migrate.py --taxonomy-file` and independent taxonomy-file resolution so bulk re-categorization works without X API credentials.
+- Tightened cold-start prompt rules and switched cold-start examples to domain-neutral placeholders.
+- Added `docs/taxonomy.md`, `taxonomy.example.md` (neutral template with commented AI/eng example), and updated README, `.env.example`, AGENTS.md, and roadmap; reconciled the stale v1.2 "fixed 10-category taxonomy" claim.
+- Tests: new `tests/test_taxonomy.py` plus extended categorizer/migrate/config suites; full suite 296 passing at ~89% coverage.
+
+**Entity tagging layer**
+
+- Added lateral entity tagging: `tags: tuple[str, ...]` field to `CategorizedTweet` and frontmatter YAML flow array.
+- Added `TaxonomyOverride` dataclass unifying taxonomy, entity_tags, deprecations, and guidance loading; single-read parse with type-guards for all fields.
+- Entity tags gated on `entity_tags` config: when absent/empty, no tags are requested in Claude prompt and `tags:` frontmatter is omitted. Preserves zero-config UX.
+- Closed-prefix/open-entity governance: allowed prefixes are keys of configured `entity_tags` dict; Claude can invent new entities under known prefixes but unknown-prefix tags are dropped.
+- Added `normalize_tag()` and `normalize_tags()`: slugify entity names (spaces/underscores → dashes, drop invalid chars), deduplicate preserving first-seen order, validate against allowed prefixes.
+- Added `build_entity_tags_section()` for sorted reference block in system prompts.
+- Threaded entity_tags through both `categorizer.py` and `migrate.py` system prompts with verbatim instruction when non-empty.
+- Updated `markdown_writer.py._build_frontmatter()` and `migrate.py._build_migrated_frontmatter()` to emit tags as YAML flow arrays, omit when empty.
+- Existing tags in migration files are preserved when Claude returns no tags (maintains backward compatibility).
+- Tests: 72 new tests for tag normalization, entity_tags parsing, TaxonomyOverride; full suite 339 passing at 88% coverage.
+- Updated `taxonomy.example.md` to maintainer's AI ontology with 6 entity tag prefixes (framework, harness, model, provider, tool, concept).
+- Added "Entity tags" section to `docs/taxonomy.md` with format, gating rules, and closed-prefix/open-entity governance.
+
 ## 2026-05-13
 
 **Synthesized bookmark removal**

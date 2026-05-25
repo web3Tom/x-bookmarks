@@ -498,6 +498,29 @@ class TestMigrateDirectory:
         results = migrate_directory(empty_dir, api_key="test-key")
         assert results == []
 
+    @patch("src.migrate.generate_titles_batch")
+    def test_limit_caps_files_processed(self, mock_gen: MagicMock, tmp_path: Path):
+        for i in range(3):
+            (tmp_path / f"note-{i}.md").write_text(
+                f'---\ntitle: "Note {i}"\nauthor: "@x"\ncategory: "Old"\n'
+                f'subCategory: "OldSub"\ndate: 2026-01-0{i + 1}\nread: false\n'
+                f'synthesized: false\ntype: "post"\n'
+                f'tweet_url: "https://x.com/x/status/{i}"\n---\n\n## Note {i}\n\n> body\n'
+            )
+        mock_gen.return_value = {
+            "note-0.md": {"title": "First", "category": "New", "sub_category": "Sub"},
+            "note-1.md": {"title": "Second", "category": "New", "sub_category": "Sub"},
+        }
+        results = migrate_directory(tmp_path, api_key="test-key", dry_run=True, limit=2)
+
+        migrated = [r for r in results if not r.skipped]
+        assert len(migrated) == 2  # third file never parsed
+        # Only the first 2 files were sent to Claude (token-bounded)
+        assert len(mock_gen.call_args.args[0]) == 2
+        # Dry-run now captures the proposed category change
+        assert migrated[0].old_category == "Old"
+        assert migrated[0].new_category == "New"
+
 
 # --- TestGenerateTitlesBatch ---
 
@@ -646,3 +669,77 @@ class TestBuildRenameFilename:
     def test_multiple_collisions(self):
         existing = {"my-title.md", "my-title-2.md"}
         assert _build_rename_filename("My Title", existing) == "my-title-3.md"
+
+
+class TestMigrationWithOverride:
+    """Test migration with taxonomy override file."""
+
+    @patch("src.migrate.anthropic")
+    def test_generate_titles_batch_accepts_override_file(self, mock_anthropic_module, valid_override_file, old_bookmark_dir):
+        """Test that generate_titles_batch accepts and uses override_file parameter."""
+        mock_client = MagicMock()
+        mock_anthropic_module.Anthropic.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock()]
+        mock_response.content[0].text = json.dumps([
+            {"filename": "2026-01-15-alice.md", "title": "New Title", "category": "AI", "sub_category": "Coding"},
+        ])
+        mock_client.messages.create.return_value = mock_response
+
+        bookmarks = [parse_existing_bookmark(old_bookmark_dir / "2026-01-15-alice.md")]
+        bookmarks = [b for b in bookmarks if b is not None]
+
+        result = generate_titles_batch(
+            bookmarks,
+            api_key="sk-test",
+            directory=old_bookmark_dir,
+            override_file=valid_override_file,
+        )
+
+        assert "2026-01-15-alice.md" in result
+        assert result["2026-01-15-alice.md"]["title"] == "New Title"
+
+    @patch("src.migrate.anthropic")
+    def test_migrate_directory_accepts_override_file(self, mock_anthropic_module, valid_override_file, old_bookmark_dir):
+        """Test that migrate_directory accepts and uses override_file parameter."""
+        mock_client = MagicMock()
+        mock_anthropic_module.Anthropic.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock()]
+        mock_response.content[0].text = json.dumps([
+            {"filename": "2026-01-15-alice.md", "title": "Alice's Great Post", "category": "AI", "sub_category": "Coding"},
+            {"filename": "2026-01-16-bob.md", "title": "Bob's Great Post", "category": "Business", "sub_category": "Finance"},
+        ])
+        mock_client.messages.create.return_value = mock_response
+
+        results = migrate_directory(
+            old_bookmark_dir,
+            api_key="sk-test",
+            dry_run=True,
+            override_file=valid_override_file,
+        )
+
+        assert len(results) >= 2
+        # Both files should be processed (dry_run doesn't affect processing)
+        assert any(r.old_filename == "2026-01-15-alice.md" for r in results if not r.skipped)
+
+    @patch("src.migrate.anthropic")
+    def test_override_file_none_is_allowed(self, mock_anthropic_module, old_bookmark_dir):
+        """Test that passing override_file=None is handled gracefully."""
+        mock_client = MagicMock()
+        mock_anthropic_module.Anthropic.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock()]
+        mock_response.content[0].text = json.dumps([
+            {"filename": "2026-01-15-alice.md", "title": "Title", "category": "Tech", "sub_category": "Software"},
+        ])
+        mock_client.messages.create.return_value = mock_response
+
+        results = migrate_directory(
+            old_bookmark_dir,
+            api_key="sk-test",
+            dry_run=True,
+            override_file=None,
+        )
+
+        assert len(results) >= 2

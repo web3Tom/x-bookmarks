@@ -241,6 +241,41 @@ class TestCategorizedTweet:
         with pytest.raises(AttributeError):
             ct.title = "Changed"
 
+    def test_tags_default_empty(self):
+        tweet = Tweet(
+            id="1", text="t", author_id="a",
+            created_at=datetime.now(), author=None,
+            public_metrics={}, media=(), external_links=(),
+            note_tweet_text=None, article_url=None,
+        )
+        cat = Category(slug="s", display_name="d", sub_category="sc")
+        ct = CategorizedTweet(tweet=tweet, category=cat, title="Title")
+        assert ct.tags == ()
+
+    def test_tags_with_values(self):
+        tweet = Tweet(
+            id="1", text="t", author_id="a",
+            created_at=datetime.now(), author=None,
+            public_metrics={}, media=(), external_links=(),
+            note_tweet_text=None, article_url=None,
+        )
+        cat = Category(slug="s", display_name="d", sub_category="sc")
+        tags = ("model/deepseek", "tool/docker")
+        ct = CategorizedTweet(tweet=tweet, category=cat, title="Title", tags=tags)
+        assert ct.tags == tags
+
+    def test_tags_is_frozen(self):
+        tweet = Tweet(
+            id="1", text="t", author_id="a",
+            created_at=datetime.now(), author=None,
+            public_metrics={}, media=(), external_links=(),
+            note_tweet_text=None, article_url=None,
+        )
+        cat = Category(slug="s", display_name="d", sub_category="sc")
+        ct = CategorizedTweet(tweet=tweet, category=cat, title="Title", tags=("tag",))
+        with pytest.raises(AttributeError):
+            ct.tags = ("new",)
+
 
 class TestBookmarkPage:
     def test_create_page(self):
