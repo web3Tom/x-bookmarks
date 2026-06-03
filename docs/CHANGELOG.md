@@ -3,6 +3,15 @@
 Reverse-chronological log of session-level outcomes for this repository.
 Newest entry at the top. Long-form reasoning lives in the author's external spec system, not here.
 
+## 2026-06-03
+
+**Deterministic mechanics alias collapse**
+
+- Added an optional `aliases:` map (`retired-slug: canonical-slug`) to the taxonomy override. Synonyms emitted by Claude are rewritten to their canonical form and de-duplicated in `normalize_mechanics`, after the response — independent of model behavior.
+- Threaded the alias map through both emission paths (`categorize_tweets` sync writer and `migrate` re-processing) so re-processed notes also adopt canonical slugs.
+- Hardened the categorizer prompt: cap mechanics at 1–4, instruct against stacking near-synonyms / facets of one idea, and pick the most specific applicable terms.
+- Documented `aliases:` in `docs/taxonomy.md` and `taxonomy.example.md`. Added tests for alias parsing, type-guarding, collapse + dedup, and end-to-end threading.
+
 ## 2026-06-02
 
 **Faceted taxonomy schema**

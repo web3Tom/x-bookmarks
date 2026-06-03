@@ -19,12 +19,15 @@ class TaxonomyOverride:
     mechanics: tuple[str, ...] | None = None
     entity_tags: dict[str, list[str]] = None  # type: ignore
     deprecations: list[str] | None = None
+    aliases: dict[str, str] = None  # type: ignore
     guidance: str | None = None
 
     def __post_init__(self) -> None:
         """Type-guard all fields; convert None to empty defaults for safe access."""
         if self.entity_tags is None:
             object.__setattr__(self, "entity_tags", {})
+        if self.aliases is None:
+            object.__setattr__(self, "aliases", {})
 
 
 # Neutral, domain-agnostic default pillars (name -> focus). The user's real
@@ -60,15 +63,27 @@ def slugify_mechanic(value: str) -> str | None:
     return _slugify(value) or None
 
 
-def normalize_mechanics(raw: Iterable[str] | None) -> tuple[str, ...]:
-    """Slugify a list of mechanics, dedupe (first-seen order), drop empties."""
+def normalize_mechanics(
+    raw: Iterable[str] | None,
+    aliases: dict[str, str] | None = None,
+) -> tuple[str, ...]:
+    """Slugify mechanics, collapse synonyms via `aliases`, dedupe, drop empties.
+
+    Each slug is mapped through `aliases` (retired -> canonical) before dedup, so
+    a note carrying both a synonym and its canonical form collapses to one entry
+    in first-seen order. The collapse is deterministic and independent of the LLM.
+    """
     if not raw:
         return ()
+    alias_map = aliases or {}
     seen: set[str] = set()
     result: list[str] = []
     for item in raw:
         slug = slugify_mechanic(str(item))
-        if slug and slug not in seen:
+        if not slug:
+            continue
+        slug = alias_map.get(slug, slug)
+        if slug not in seen:
             result.append(slug)
             seen.add(slug)
     return tuple(result)
@@ -285,6 +300,15 @@ def load_taxonomy_override(filepath: Path | None) -> TaxonomyOverride | None:
         logger.warning("Override file 'deprecate:' is not a list: %s", filepath)
         deprecations = None
 
+    aliases = parsed.get("aliases")
+    if aliases is not None and not isinstance(aliases, dict):
+        logger.warning("Override file 'aliases:' is not a dict: %s", filepath)
+        aliases = None
+    elif isinstance(aliases, dict):
+        aliases = {
+            str(k): str(v) for k, v in aliases.items() if k is not None and v is not None
+        }
+
     guidance = body.strip() or None
 
     return TaxonomyOverride(
@@ -292,6 +316,7 @@ def load_taxonomy_override(filepath: Path | None) -> TaxonomyOverride | None:
         mechanics=mechanics,
         entity_tags=entity_tags or {},
         deprecations=deprecations,
+        aliases=aliases or {},
         guidance=guidance,
     )
 

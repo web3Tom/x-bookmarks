@@ -118,6 +118,29 @@ class TestNormalizeMechanics:
         # Dot is not a valid char, gets dropped; only alphanumeric and dashes survive
         assert result == ("1", "25", "rag")
 
+    def test_alias_collapses_synonym_to_canonical(self):
+        # A retired synonym must snap to its canonical form so the vocabulary
+        # cannot re-fragment regardless of what the LLM emits.
+        aliases = {"persistent-memory": "agent-memory"}
+        assert normalize_mechanics(["persistent-memory"], aliases) == ("agent-memory",)
+
+    def test_alias_dedupes_when_synonym_and_canonical_coexist(self):
+        # The exact failure we observed: a note carrying both the synonym and the
+        # canonical term must collapse to a single entry, not two.
+        aliases = {"context-hygiene": "context-management"}
+        result = normalize_mechanics(
+            ["context-management", "context-hygiene"], aliases
+        )
+        assert result == ("context-management",)
+
+    def test_alias_applied_after_slugify(self):
+        # Aliases key on the slug, so a raw "Context Hygiene" still collapses.
+        aliases = {"context-hygiene": "context-management"}
+        assert normalize_mechanics(["Context Hygiene"], aliases) == ("context-management",)
+
+    def test_no_aliases_leaves_slugs_untouched(self):
+        assert normalize_mechanics(["context-hygiene"]) == ("context-hygiene",)
+
 
 class TestValidatePillar:
     """Test pillar validation with fallback."""
@@ -462,6 +485,7 @@ class TestLoadTaxonomyOverride:
         assert result.mechanics is None
         assert result.entity_tags == {}
         assert result.deprecations is None
+        assert result.aliases == {}
         # No body text, so guidance is None
         assert result.guidance is None
 
@@ -496,6 +520,24 @@ class TestLoadTaxonomyOverride:
         )
         result = load_taxonomy_override(override_file)
         assert result.deprecations == ["General", "Uncategorized"]
+
+    def test_aliases_as_map(self, tmp_path):
+        override_file = tmp_path / "aliases.md"
+        override_file.write_text(
+            "---\naliases:\n  context-hygiene: context-management\n"
+            "  token-cost: token-economics\n---\n"
+        )
+        result = load_taxonomy_override(override_file)
+        assert result.aliases == {
+            "context-hygiene": "context-management",
+            "token-cost": "token-economics",
+        }
+
+    def test_aliases_default_empty_when_absent(self, tmp_path):
+        override_file = tmp_path / "no_aliases.md"
+        override_file.write_text("---\nmechanics:\n  - rag\n---\n")
+        result = load_taxonomy_override(override_file)
+        assert result.aliases == {}
 
     def test_guidance_from_body(self, tmp_path):
         override_file = tmp_path / "guidance.md"
@@ -542,6 +584,13 @@ class TestLoadTaxonomyOverride:
         override_file.write_text("---\ndeprecate: {not: list}\n---\n")
         result = load_taxonomy_override(override_file)
         assert result.deprecations is None
+
+    def test_type_guards_aliases_not_dict(self, tmp_path):
+        """aliases: must be a dict; if not, fall back to {} with warning."""
+        override_file = tmp_path / "bad_aliases.md"
+        override_file.write_text("---\naliases:\n  - not\n  - a-dict\n---\n")
+        result = load_taxonomy_override(override_file)
+        assert result.aliases == {}
 
     def test_malformed_yaml_returns_safe_default_with_guidance(self, malformed_override_file):
         """Malformed YAML: return safe defaults + body text as guidance."""

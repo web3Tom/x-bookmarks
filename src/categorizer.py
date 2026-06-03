@@ -78,9 +78,11 @@ def _build_system_prompt(
         "- Use ONLY the pillars listed above; do not invent new ones.\n"
         "- Pick the single closest pillar — never a catch-all.\n\n"
         "Mechanics rules:\n"
-        "- Provide at least one mechanic per tweet.\n"
+        "- Provide 1-4 mechanics per tweet — choose the most specific that apply, not every one that touches.\n"
         "- Prefer reusing the established mechanics below; only coin a new one when none fit.\n"
-        "- Mechanics are lowercase, dash-separated slugs (e.g. `rag`, `persistent-memory`)."
+        "- Do NOT stack near-synonyms or facets of one idea (e.g. pick a single context-* term, "
+        "not several). If a broad established term already covers the point, do not also add a narrower synonym.\n"
+        "- Mechanics are lowercase, dash-separated slugs (e.g. `rag`, `agent-memory`)."
     ]
 
     mechanics_section = build_mechanics_section(mechanics_vocab)
@@ -121,13 +123,13 @@ def _build_system_prompt(
     if entity_tags:
         prompt_parts.append(
             '[{"tweet_id": "...", "pillar": "Applied Practice", '
-            '"mechanics": ["rag", "persistent-memory"], "title": "Clear descriptive title", '
+            '"mechanics": ["rag", "agent-memory"], "title": "Clear descriptive title", '
             '"tags": ["framework/langgraph", "model/deepseek"]}, ...]'
         )
     else:
         prompt_parts.append(
             '[{"tweet_id": "...", "pillar": "Applied Practice", '
-            '"mechanics": ["rag", "persistent-memory"], "title": "Clear descriptive title"}, ...]'
+            '"mechanics": ["rag", "agent-memory"], "title": "Clear descriptive title"}, ...]'
         )
 
     return "".join(prompt_parts)
@@ -196,6 +198,7 @@ def categorize_tweets(
     override_data = load_taxonomy_override(override_file)
     pillars, descriptions, mechanics_vocab, entity_tags = _resolve_facets(override_data)
     deprecations = override_data.deprecations if override_data else None
+    aliases = override_data.aliases if override_data else None
     guidance = override_data.guidance if override_data else None
     fallback_pillar = pillars[0]
 
@@ -228,7 +231,7 @@ def categorize_tweets(
         if entry:
             raw_pillar, raw_mechanics, title, raw_tags = entry
             pillar = validate_pillar(raw_pillar, pillars, fallback_pillar)
-            mechanics = normalize_mechanics(raw_mechanics)
+            mechanics = normalize_mechanics(raw_mechanics, aliases)
             if not mechanics:
                 logger.warning("No mechanics for tweet %s; emitting fallback", tweet.id)
             if not title:

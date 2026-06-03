@@ -12,6 +12,10 @@
 #                 tools, frameworks, models as `prefix/entity` (e.g. `tool/docker`).
 #                 Prefixes are CLOSED (only these 4 keys allowed); entities are OPEN.
 #   deprecate:    List of pillar/mechanic values to steer Claude away from.
+#   aliases:      Map of retired-slug -> canonical-slug. Applied deterministically
+#                 after Claude responds: any emitted synonym snaps to its canonical
+#                 mechanic and duplicates collapse. Prevents vocabulary drift when
+#                 several slugs mean the same thing.
 #
 # Note: the override file's pillars, mechanics, and entity_tags REPLACE the neutral
 # defaults when you provide them. Fields you omit fall back to the neutral defaults.
@@ -74,6 +78,13 @@ deprecate:
   - general
   - uncategorized
   - misc
+
+# Synonym collapse: retired slug -> canonical. Applied after Claude responds, so a
+# stray synonym (or an old slug on a re-processed note) snaps to one canonical term.
+aliases:
+  unit-testing: testing-strategies
+  test-automation: testing-strategies
+  perf-tuning: performance-optimization
 ---
 
 ## Domain Guidance

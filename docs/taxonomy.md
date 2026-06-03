@@ -136,6 +136,20 @@ deprecate:
 
 Claude will **never assign or create** these values. Useful for preventing clutter from abandoned categories.
 
+#### `aliases` (optional)
+
+A YAML map of `retired-slug: canonical-slug` applied to mechanics **after** Claude responds:
+
+```yaml
+---
+aliases:
+  context-hygiene: context-management
+  token-cost: token-economics
+---
+```
+
+Unlike `deprecate:` (a prompt-level hint Claude *may* ignore), `aliases:` is a **deterministic** post-processing step: any emitted slug matching a key is rewritten to its canonical value, and if the canonical term is already present the duplicate collapses. This guarantees a single canonical mechanic regardless of model behavior — the right tool when several slugs mean the same thing and you want the vocabulary to stop fragmenting. It also applies when `migrate` re-processes an existing note, so old slugs adopt the canonical form on the next pass.
+
 #### Body (optional)
 
 After the closing `---`, you can add domain-specific guidance as Markdown. This text is appended to Claude's system prompt under "Domain guidance:":
@@ -331,4 +345,4 @@ If you had old `category`/`subCategory` notes and want to preserve that structur
 
 ### Claude Creates Unwanted Mechanics
 
-Add them to the `deprecate:` list in the override file to prevent future use.
+Add them to the `deprecate:` list to steer Claude away (prompt-level), or — if the unwanted slug is a synonym of one you already use — add an `aliases:` entry (`unwanted-slug: canonical-slug`) to rewrite it deterministically after the response, regardless of what Claude emits.

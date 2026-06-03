@@ -438,6 +438,37 @@ class TestCategorizeTweets:
         assert result[0].mechanics.count("rag") == 1  # No dupes
 
     @patch("src.categorizer.anthropic.Anthropic")
+    def test_aliases_collapse_synonyms_end_to_end(self, mock_anthropic_class, tmp_path):
+        """An override alias must collapse an LLM-emitted synonym to canonical."""
+        override_file = tmp_path / "taxonomy.md"
+        override_file.write_text(
+            "---\npillars:\n  - Applied Practice\n"
+            "aliases:\n  persistent-memory: agent-memory\n---\n"
+        )
+        mock_client = MagicMock()
+        mock_anthropic_class.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock()]
+        mock_response.content[0].text = json.dumps([
+            {
+                "tweet_id": "1",
+                "pillar": "Applied Practice",
+                # LLM emits both the synonym and the canonical term.
+                "mechanics": ["agent-memory", "persistent-memory"],
+                "title": "Title",
+            },
+        ])
+        mock_response.usage.input_tokens = 100
+        mock_response.usage.output_tokens = 50
+        mock_client.messages.create.return_value = mock_response
+
+        tweets = (_make_tweet("1", "Test"),)
+        result, _ = categorize_tweets(tweets, api_key="sk-test", override_file=override_file)
+
+        # Synonym snaps to canonical and collapses to a single entry.
+        assert result[0].mechanics == ("agent-memory",)
+
+    @patch("src.categorizer.anthropic.Anthropic")
     def test_tags_normalization_and_filtering(self, mock_anthropic_class):
         """Test that tags are normalized and filtered by prefix."""
         mock_client = MagicMock()

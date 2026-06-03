@@ -311,6 +311,14 @@ class TestResolveMechanics:
         result = _resolve_mechanics(title_data, fm)
         assert result == ()
 
+    def test_aliases_collapse_existing_note_synonyms(self):
+        # Re-processing a note with a retired slug must adopt the canonical form.
+        title_data = {"mechanics": None}
+        fm = {"mechanics": ["agent-memory", "persistent-memory"]}
+        aliases = {"persistent-memory": "agent-memory"}
+        result = _resolve_mechanics(title_data, fm, aliases)
+        assert result == ("agent-memory",)
+
 
 # --- TestResolveTags ---
 

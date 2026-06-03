@@ -352,10 +352,15 @@ def _resolve_pillar(title_data: dict, fm: dict, pillars: list[str], fallback: st
     return validate_pillar(raw, pillars, fallback)
 
 
-def _resolve_mechanics(title_data: dict, fm: dict) -> tuple[str, ...]:
-    """Pick mechanics: LLM's value if any, else the existing note's."""
+def _resolve_mechanics(
+    title_data: dict, fm: dict, aliases: dict[str, str] | None = None
+) -> tuple[str, ...]:
+    """Pick mechanics: LLM's value if any, else the existing note's.
+
+    Collapses synonyms via `aliases` so re-processed notes adopt canonical slugs.
+    """
     raw = title_data.get("mechanics") or _existing_mechanics(fm)
-    return normalize_mechanics(raw)
+    return normalize_mechanics(raw, aliases)
 
 
 def _resolve_tags(title_data: dict, fm: dict, allowed_prefixes: set[str]) -> tuple[str, ...]:
@@ -371,6 +376,7 @@ def migrate_single_file(
     pillars: list[str] | None = None,
     fallback_pillar: str = "",
     allowed_prefixes: set[str] | None = None,
+    aliases: dict[str, str] | None = None,
 ) -> MigrationResult:
     """Rebuild frontmatter + body, write file in-place, rename to title slug."""
     fm = parsed.frontmatter
@@ -384,7 +390,7 @@ def migrate_single_file(
         new_title = _sanitize_title(old_title)
 
     pillar = _resolve_pillar(title_data, fm, pillars, fallback_pillar)
-    mechanics = _resolve_mechanics(title_data, fm)
+    mechanics = _resolve_mechanics(title_data, fm, aliases)
     tags = _resolve_tags(title_data, fm, allowed_prefixes)
 
     removed = tuple(k for k in fm if k in _DEPRECATED_FIELDS)
@@ -479,6 +485,7 @@ def migrate_directory(
     # Resolve the allowed pillars + entity prefixes once for the whole batch.
     override_data = load_taxonomy_override(override_file)
     pillars, _descriptions, _mechanics_vocab, _entity_tags = _resolve_facets(override_data)
+    aliases = override_data.aliases if override_data else None
     fallback_pillar = pillars[0] if pillars else ""
     allowed_prefixes = set(ENTITY_PREFIXES)
 
@@ -511,12 +518,13 @@ def migrate_directory(
                 new_filename=new_filename,
                 old_pillar=str(bm.frontmatter.get("pillar", "")),
                 new_pillar=_resolve_pillar(title_data, bm.frontmatter, pillars, fallback_pillar),
-                mechanics=_resolve_mechanics(title_data, bm.frontmatter),
+                mechanics=_resolve_mechanics(title_data, bm.frontmatter, aliases),
                 tags=_resolve_tags(title_data, bm.frontmatter, allowed_prefixes),
             ))
         else:
             result = migrate_single_file(
                 bm, title_data, existing_names, pillars, fallback_pillar, allowed_prefixes,
+                aliases,
             )
             existing_names.add(result.new_filename)
             results.append(result)
