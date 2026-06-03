@@ -17,8 +17,9 @@ def _note(tweet_id: str = "100", synthesized: str | None = "false", extra: str =
         "---",
         'title: "Test"',
         'author: "@alice"',
-        'category: "AI Coding"',
-        'subCategory: "Coding Workflows"',
+        'pillar: "Applied Practice"',
+        "mechanics:",
+        "  - rag",
         "date: 2026-05-13",
         "read: false",
     ]

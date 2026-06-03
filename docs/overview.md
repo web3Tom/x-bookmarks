@@ -35,7 +35,7 @@ If neither variable is exported in the process environment, the CLI also reads s
 2. Load credentials and local config from `.env`.
 3. Fetch bookmarks from the X API.
 4. Skip bookmarks that already exist in the target directory.
-5. Ask Claude to generate a title plus `category` and `sub_category`.
+5. Ask Claude to generate a title plus `pillar`, `mechanics`, and optional `entity_tags`.
 6. Write one Markdown note per bookmark.
 7. Append structured run metadata to `.x-bookmarks-history.jsonl`.
 
@@ -74,25 +74,28 @@ Dedup runs after all fetching completes, not during pagination:
 
 ### Categorization
 
-[`src/categorizer.py`](x-bookmarks/src/categorizer.py) builds a prompt from the current vault taxonomy when available. The taxonomy is dynamic:
+[`src/categorizer.py`](x-bookmarks/src/categorizer.py) builds a prompt using the override taxonomy file or neutral defaults. The schema is faceted:
 
-- existing `category` and `subCategory` values are preferred
-- new subcategories can be added under existing categories
-- new categories are created only when no existing category fits
-- `General` and `Uncategorized` are explicitly discouraged in the prompt
+- **Pillar**: Selects exactly one pillar (strategic mode). Pillars come from the override file if present, else neutral `DEFAULT_PILLARS`. The tool does not read existing vault notes to discover pillars.
+- **Mechanics**: Optional vocabulary of categorization techniques. Mechanics come from the override file if present, else `DEFAULT_MECHANICS` (empty). Claude can invent new mechanics beyond the seed vocabulary.
+- **Entity tags**: Optional nested dict tagging specific tools, frameworks, models. Entity tags come from the override file if present, else empty. Closed prefixes (framework, harness, model, tool), open entity vocabulary.
 
-If Claude returns no mapping for a tweet, the current code still falls back internally to `General` / `Uncategorized` as a last-resort safety behavior.
+Claude's categorization is guided by optional domain-specific guidance appended from the override file body.
 
 ### Markdown Output
 
-[`src/markdown_writer.py`](x-bookmarks/src/markdown_writer.py) writes notes with the required frontmatter schema and body structure:
+[`src/markdown_writer.py`](x-bookmarks/src/markdown_writer.py) writes notes with the faceted frontmatter schema and body structure:
 
 ```yaml
 ---
 title: "LangGraph Agent Memory Patterns"
 author: "@handle"
-category: "AI Coding"
-subCategory: "Coding Workflows"
+pillar: "Applied Practice"
+mechanics:
+  - tutorials
+  - design-patterns
+entity_tags:
+  framework: [langgraph]
 date: 2026-02-23
 read: false
 synthesized: false
@@ -101,7 +104,7 @@ tweet_url: "https://x.com/handle/status/123456789"
 ---
 ```
 
-Posts use blockquoted tweet text. Articles write article content directly. Both include `## References`.
+Notes may omit `mechanics` and `entity_tags` if empty (not present in YAML if the lists/dicts are empty). Posts use blockquoted tweet text. Articles write article content directly. Both include `## References`.
 
 ### Synthesized Bookmark Removal
 

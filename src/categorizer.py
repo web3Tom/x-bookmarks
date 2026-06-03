@@ -7,110 +7,108 @@ from pathlib import Path
 
 import anthropic
 
-from src.models import Category, CategorizedTweet, Tweet
+from src.models import CategorizedTweet, Tweet
 from src.taxonomy import (
-    DEFAULT_TAXONOMY,
+    DEFAULT_MECHANICS,
+    DEFAULT_PILLARS,
+    DEFAULT_PILLAR_NAMES,
+    ENTITY_PREFIXES,
     build_entity_tags_section,
-    build_taxonomy_section,
-    load_override_file,
+    build_mechanics_section,
+    build_pillars_section,
     load_taxonomy_override,
-    merge_taxonomies,
+    normalize_mechanics,
     normalize_tags,
-    parse_deprecations,
-    parse_entity_tags,
-    parse_override_guidance,
+    validate_pillar,
 )
 
 logger = logging.getLogger(__name__)
 
 _MODEL = "claude-sonnet-4-6"
 _MAX_TOKENS = 8192
-_FALLBACK_CATEGORY = Category(
-    slug="general", display_name="General", sub_category="Uncategorized"
-)
-
-_FRONTMATTER_CATEGORY_RE = re.compile(r'^category:\s*"(.+)"', re.MULTILINE)
-_FRONTMATTER_SUBCATEGORY_RE = re.compile(r'^subCategory:\s*"(.+)"', re.MULTILINE)
 
 
-def read_existing_taxonomy(output_dir: Path) -> dict[str, set[str]]:
-    """Scan *.md frontmatter for existing category/subCategory values."""
-    taxonomy: dict[str, set[str]] = {}
-    if not output_dir.exists():
-        return taxonomy
-    for md_file in output_dir.glob("*.md"):
-        content = md_file.read_text()
-        cat_match = _FRONTMATTER_CATEGORY_RE.search(content)
-        sub_match = _FRONTMATTER_SUBCATEGORY_RE.search(content)
-        if cat_match and sub_match:
-            cat = cat_match.group(1)
-            sub = sub_match.group(1)
-            taxonomy.setdefault(cat, set()).add(sub)
-    return taxonomy
+def _resolve_facets(
+    override_data,
+) -> tuple[list[str], dict[str, str] | None, tuple[str, ...], dict[str, list[str]]]:
+    """Resolve (pillars, pillar_descriptions, mechanics_vocab, entity_tags).
+
+    Pillars come from the override file if present, else the neutral defaults
+    (which carry focus descriptions). Mechanics vocab and entity tags come from
+    the override file, else neutral defaults.
+    """
+    if override_data and override_data.pillars:
+        pillars = list(override_data.pillars)
+        descriptions = None
+    else:
+        pillars = list(DEFAULT_PILLAR_NAMES)
+        descriptions = {name: focus for name, focus in DEFAULT_PILLARS}
+
+    if override_data and override_data.mechanics:
+        mechanics_vocab = tuple(override_data.mechanics)
+    else:
+        mechanics_vocab = DEFAULT_MECHANICS
+
+    entity_tags = override_data.entity_tags if override_data else {}
+    return pillars, descriptions, mechanics_vocab, entity_tags
 
 
 def _build_system_prompt(
-    taxonomy: dict[str, set[str]],
+    pillars: list[str],
+    pillar_descriptions: dict[str, str] | None = None,
+    mechanics_vocab: tuple[str, ...] = (),
     deprecations: list[str] | None = None,
     guidance: str | None = None,
     entity_tags: dict[str, list[str]] | None = None,
 ) -> str:
-    """Build the categorization system prompt from the current vault taxonomy.
+    """Build the categorization system prompt for the faceted schema.
 
-    Optionally includes deprecation rules, domain-specific guidance, and entity tags reference.
+    Teaches the fixed pillars, the established mechanics vocabulary, and the
+    entity-tag prefixes. Optionally includes deprecations and domain guidance.
     """
-    if taxonomy:
-        taxonomy_section = (
-            f"Existing categories and subcategories in the vault:\n"
-            f"{build_taxonomy_section(taxonomy)}\n\n"
-            "Rules:\n"
-            "- Prefer the existing categories and subcategories listed above.\n"
-            "- If a tweet fits an existing category but needs a new subcategory, add the new subcategory under that category.\n"
-            "- If no existing category fits, create a new one in Title Case (e.g., \"Custom Category\") with a concise subcategory (e.g., \"Specific Topic\").\n"
-            "- New names must be 2-4 words, Title Case, and must not duplicate or overlap existing ones.\n"
-            "- Do NOT use \"General\" or \"Uncategorized\" — every tweet deserves a meaningful category."
-        )
-    else:
-        taxonomy_section = (
-            "No existing categories yet — this is the first run.\n\n"
-            "Rules:\n"
-            "- Create meaningful categories in Title Case (e.g., \"Technology\", \"Health & Wellness\").\n"
-            "- Each category must have exactly one subcategory per tweet, also in Title Case.\n"
-            "- Keep names concise (2-4 words). Group related content under the same category.\n"
-            "- Do NOT use \"General\" or \"Uncategorized\" — every tweet deserves a meaningful category."
-        )
-
     prompt_parts = [
-        "You are a bookmark categorizer. Given a JSON array of tweets (bookmarks), "
-        "assign each one to exactly one category and sub_category, and generate a concise, descriptive title.\n\n"
-        f"{taxonomy_section}"
+        "You are a bookmark categorizer using a faceted classification model. "
+        "Given a JSON array of tweets (bookmarks), assign each one:\n"
+        "- exactly one `pillar` (the primary domain — pick from the fixed list below),\n"
+        "- one or more `mechanics` (the verbs/concepts it is about — lowercase-dashed slugs),\n"
+        "- a concise, descriptive `title`.\n\n"
+        "Pillars (choose exactly one per tweet):\n"
+        f"{build_pillars_section(pillars, pillar_descriptions)}\n\n"
+        "Pillar rules:\n"
+        "- Use ONLY the pillars listed above; do not invent new ones.\n"
+        "- Pick the single closest pillar — never a catch-all.\n\n"
+        "Mechanics rules:\n"
+        "- Provide at least one mechanic per tweet.\n"
+        "- Prefer reusing the established mechanics below; only coin a new one when none fit.\n"
+        "- Mechanics are lowercase, dash-separated slugs (e.g. `rag`, `persistent-memory`)."
     ]
 
+    mechanics_section = build_mechanics_section(mechanics_vocab)
+    if mechanics_section:
+        prompt_parts.append(f"\n\nEstablished mechanics (reference):\n{mechanics_section}")
+
     if deprecations:
-        deprecation_text = "\n\nAvoid these categories (do not assign or create them):\n"
+        deprecation_text = "\n\nAvoid these (do not assign or create them):\n"
         for dep in deprecations:
             deprecation_text += f"- {dep}\n"
         prompt_parts.append(deprecation_text.rstrip())
 
     if guidance:
-        prompt_parts.append(f"\nDomain guidance:\n{guidance}")
+        prompt_parts.append(f"\n\nDomain guidance:\n{guidance}")
 
     # Entity tags section (only if non-empty)
     if entity_tags:
         entity_section = build_entity_tags_section(entity_tags)
         if entity_section:
-            prompt_parts.extend([
-                "\n\nKnown entity tags (reference):\n",
-                entity_section,
-            ])
+            prompt_parts.append(f"\n\nKnown entity tags (reference):\n{entity_section}")
         prompt_parts.append(
-            "\n\nIn addition to Domain (Category) and Discipline (Subcategory), "
-            "extract specific entities mentioned in the text. Format them as prefix/entity-name "
-            "(e.g., model/llama3, tool/docker). Use the provided entity_tags list as a primary reference, "
-            "but you may generate new valid tags using the established prefixes if a new entity is encountered."
+            "\n\nAlso extract specific entities mentioned in the text as `prefix/entity-name` "
+            f"tags. Allowed prefixes (nouns only): {', '.join(ENTITY_PREFIXES)} "
+            "(e.g., framework/langgraph, model/llama3, tool/docker). Use the entity_tags "
+            "list as a primary reference; you may add new entities under the established prefixes."
         )
 
-    prompt_parts.extend([
+    prompt_parts.append(
         "\n\nTitle rules:\n"
         "- Generate a title (max 80 chars) for each bookmark.\n"
         "- For articles: prefer the article's actual title or topic.\n"
@@ -118,23 +116,21 @@ def _build_system_prompt(
         "- Title must be YAML-safe: no colons, no quotes, no newlines, no brackets.\n\n"
         "Return ONLY a JSON array, no other text.\n\n"
         "Response format:\n"
-    ])
+    )
 
     if entity_tags:
         prompt_parts.append(
-            '[{"tweet_id": "...", "category": "Technology", "sub_category": "Software Development", "title": "Clear descriptive title", "tags": ["model/deepseek", "provider/openrouter"]}, ...]'
+            '[{"tweet_id": "...", "pillar": "Applied Practice", '
+            '"mechanics": ["rag", "persistent-memory"], "title": "Clear descriptive title", '
+            '"tags": ["framework/langgraph", "model/deepseek"]}, ...]'
         )
     else:
         prompt_parts.append(
-            '[{"tweet_id": "...", "category": "Technology", "sub_category": "Software Development", "title": "Clear descriptive title"}, ...]'
+            '[{"tweet_id": "...", "pillar": "Applied Practice", '
+            '"mechanics": ["rag", "persistent-memory"], "title": "Clear descriptive title"}, ...]'
         )
 
     return "".join(prompt_parts)
-
-
-def _slugify(display_name: str) -> str:
-    """Convert a display name to a kebab-case slug."""
-    return re.sub(r"[\s&]+", "-", display_name.lower()).strip("-")
 
 
 def build_prompt_payload(tweets: tuple[Tweet, ...]) -> str:
@@ -162,8 +158,14 @@ def _sanitize_title(text: str) -> str:
     return title
 
 
-def parse_categorization_response(text: str) -> dict[str, tuple[Category, str, list[str]]]:
-    """Parse the categorization response into a tweet_id -> (Category, title, tags) mapping."""
+def parse_categorization_response(
+    text: str,
+) -> dict[str, tuple[str, tuple[str, ...], str, list[str]]]:
+    """Parse the response into tweet_id -> (pillar, mechanics, title, tags).
+
+    `pillar` and `mechanics` are returned raw (validation/normalization happens
+    in categorize_tweets, which knows the allowed pillar set).
+    """
     cleaned = text.strip()
     fenced = re.match(r"```(?:json)?\s*\n?(.*?)\n?```", cleaned, re.DOTALL)
     if fenced:
@@ -172,11 +174,8 @@ def parse_categorization_response(text: str) -> dict[str, tuple[Category, str, l
     entries = json.loads(cleaned)
     return {
         entry["tweet_id"]: (
-            Category(
-                slug=_slugify(entry["category"]),
-                display_name=entry["category"],
-                sub_category=entry["sub_category"],
-            ),
+            str(entry.get("pillar", "")),
+            tuple(entry.get("mechanics", []) or ()),
             entry.get("title", ""),
             entry.get("tags", []),
         )
@@ -187,30 +186,22 @@ def parse_categorization_response(text: str) -> dict[str, tuple[Category, str, l
 def categorize_tweets(
     tweets: tuple[Tweet, ...],
     api_key: str,
-    output_dir: Path | None = None,
     override_file: Path | None = None,
 ) -> tuple[tuple[CategorizedTweet, ...], dict]:
     """Categorize tweets using Claude in a single API call.
 
-    Loads vault taxonomy, merges with optional override file, and applies deprecations/guidance/entity_tags.
+    Loads the optional override file (pillars/mechanics/entity_tags/deprecations/
+    guidance) and falls back to neutral defaults.
     """
-    vault_taxonomy = read_existing_taxonomy(output_dir) if output_dir is not None else {}
-
-    # Load override file once using TaxonomyOverride
     override_data = load_taxonomy_override(override_file)
-    override_taxonomy = override_data.taxonomy if override_data else None
-    available = merge_taxonomies(vault_taxonomy, override_taxonomy)
-
-    # Use DEFAULT_TAXONOMY if both vault and override are empty
-    if not available:
-        available = {cat: set(subs) for cat, subs in DEFAULT_TAXONOMY.items()}
-
+    pillars, descriptions, mechanics_vocab, entity_tags = _resolve_facets(override_data)
     deprecations = override_data.deprecations if override_data else None
     guidance = override_data.guidance if override_data else None
-    entity_tags = override_data.entity_tags if override_data else {}
-    allowed_prefixes = set(entity_tags.keys()) if entity_tags else None
+    fallback_pillar = pillars[0]
 
-    system_prompt = _build_system_prompt(available, deprecations, guidance, entity_tags)
+    system_prompt = _build_system_prompt(
+        pillars, descriptions, mechanics_vocab, deprecations, guidance, entity_tags,
+    )
 
     client = anthropic.Anthropic(api_key=api_key)
     payload = build_prompt_payload(tweets)
@@ -223,25 +214,36 @@ def categorize_tweets(
     )
 
     raw_text = response.content[0].text
-    category_map = parse_categorization_response(raw_text)
+    response_map = parse_categorization_response(raw_text)
 
     usage = {
         "input_tokens": response.usage.input_tokens,
         "output_tokens": response.usage.output_tokens,
     }
 
+    allowed_prefixes = set(ENTITY_PREFIXES)
     categorized = []
     for tweet in tweets:
-        entry = category_map.get(tweet.id)
+        entry = response_map.get(tweet.id)
         if entry:
-            category, title, raw_tags = entry
+            raw_pillar, raw_mechanics, title, raw_tags = entry
+            pillar = validate_pillar(raw_pillar, pillars, fallback_pillar)
+            mechanics = normalize_mechanics(raw_mechanics)
+            if not mechanics:
+                logger.warning("No mechanics for tweet %s; emitting fallback", tweet.id)
             if not title:
                 title = _sanitize_title(tweet.display_text)
-            tags = normalize_tags(raw_tags, allowed_prefixes) if entity_tags else ()
+            tags = normalize_tags(list(raw_tags), allowed_prefixes)
         else:
-            category = _FALLBACK_CATEGORY
+            logger.warning("No categorization for tweet %s; using fallback pillar", tweet.id)
+            pillar = fallback_pillar
+            mechanics = ()
             title = _sanitize_title(tweet.display_text)
             tags = ()
-        categorized.append(CategorizedTweet(tweet=tweet, category=category, title=title, tags=tags))
+        categorized.append(
+            CategorizedTweet(
+                tweet=tweet, pillar=pillar, title=title, mechanics=mechanics, tags=tags,
+            )
+        )
 
     return tuple(categorized), usage

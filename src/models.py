@@ -72,17 +72,11 @@ class Tweet:
 
 
 @dataclass(frozen=True)
-class Category:
-    slug: str
-    display_name: str
-    sub_category: str
-
-
-@dataclass(frozen=True)
 class CategorizedTweet:
     tweet: Tweet
-    category: Category
+    pillar: str
     title: str
+    mechanics: tuple[str, ...] = ()
     tags: tuple[str, ...] = ()
 
 

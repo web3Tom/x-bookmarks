@@ -3,6 +3,17 @@
 Reverse-chronological log of session-level outcomes for this repository.
 Newest entry at the top. Long-form reasoning lives in the author's external spec system, not here.
 
+## 2026-06-02
+
+**Faceted taxonomy schema**
+
+- Replaced `category`/`subCategory` hierarchical taxonomy with a faceted schema: `pillar` (scalar, strategic mode) + `mechanics` (list, techniques/concepts) + `entity_tags` (nested dict, tools/frameworks/models).
+- Dropped the `provider` and `concept` entity tag prefixes; concept values migrated into mechanics.
+- Updated `taxonomy.example.md` to the new override format (pillars, mechanics, entity_tags, deprecate, guidance) with domain-neutral examples and worked scenarios.
+- Rewrote `docs/taxonomy.md` with comprehensive coverage of the faceted model, union-merge semantics, all four entity tag prefixes (framework, harness, model, tool), and common patterns.
+- Updated `README.md`, `AGENTS.md`, and `docs/overview.md` frontmatter schema examples and categorization descriptions.
+- Tests: all 418 passing; schema refactoring already complete from prior sessions.
+
 ## 2026-05-24
 
 **Taxonomy example populated from production vault**

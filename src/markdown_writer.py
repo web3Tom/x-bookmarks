@@ -6,7 +6,8 @@ from pathlib import Path
 
 import yaml
 
-from src.models import CategorizedTweet, Category, Tweet
+from src.models import CategorizedTweet, Tweet
+from src.taxonomy import group_entity_tags
 
 logger = logging.getLogger(__name__)
 
@@ -55,44 +56,96 @@ def _escape_yaml_string(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def _build_frontmatter(
-    tweet: Tweet,
-    category: Category,
-    bookmark_type: str,
-    title: str,
-    tags: tuple[str, ...] = (),
-) -> str:
-    """YAML block with all metadata fields."""
-    username = tweet.author.username if tweet.author else "unknown"
-    date_str = tweet.created_at.strftime("%Y-%m-%d")
+_FALLBACK_MECHANIC = "uncategorized"
 
-    escaped_title = _escape_yaml_string(title)
-    tweet_url = f"https://x.com/{username}/status/{tweet.id}"
+
+def build_faceted_frontmatter(
+    *,
+    title: str,
+    author: str,
+    pillar: str,
+    mechanics: tuple[str, ...],
+    entity_tags: dict[str, list[str]],
+    date: str,
+    read: bool,
+    synthesized: bool,
+    bookmark_type: str,
+    tweet_url: str,
+    article_url: str | None = None,
+    tail_lines: tuple[str, ...] = (),
+) -> str:
+    """Emit the canonical faceted frontmatter block.
+
+    Field order: title, author, pillar, mechanics, entity_tags, date, read,
+    synthesized, type, tweet_url, article_url, <tail_lines>. `mechanics` always
+    emits at least one item; `entity_tags` is omitted entirely when empty.
+
+    Shared by the sync writer and the migration writer so the two paths cannot
+    drift apart.
+    """
+    if not author.startswith("@"):
+        author = f"@{author}"
+    safe_mechanics = mechanics or (_FALLBACK_MECHANIC,)
 
     lines = [
         "---",
-        f'title: "{escaped_title}"',
-        f'author: "@{username}"',
-        f'category: "{_escape_yaml_string(category.display_name)}"',
-        f'subCategory: "{_escape_yaml_string(category.sub_category)}"',
-        f"date: {date_str}",
-        "read: false",
-        "synthesized: false",
-        f'type: "{bookmark_type}"',
-        f'tweet_url: "{tweet_url}"',
+        f'title: "{_escape_yaml_string(title)}"',
+        f'author: "{_escape_yaml_string(author)}"',
+        f'pillar: "{_escape_yaml_string(pillar)}"',
+        "mechanics:",
     ]
+    lines.extend(f"  - {m}" for m in safe_mechanics)
 
-    if bookmark_type == "article" and tweet.article_url:
-        lines.append(f'article_url: "{tweet.article_url}"')
+    if entity_tags:
+        lines.append("entity_tags:")
+        for prefix, entities in entity_tags.items():
+            lines.append(f"  {prefix}: [{', '.join(entities)}]")
 
-    # Add tags as YAML flow array if non-empty
-    if tags:
-        escaped_tags = [_escape_yaml_string(tag) for tag in tags]
-        tags_array = ", ".join(f'"{tag}"' for tag in escaped_tags)
-        lines.append(f"tags: [{tags_array}]")
+    lines.extend([
+        f"date: {date}",
+        f"read: {'true' if read else 'false'}",
+        f"synthesized: {'true' if synthesized else 'false'}",
+        f'type: "{_escape_yaml_string(bookmark_type)}"',
+        f'tweet_url: "{_escape_yaml_string(tweet_url)}"',
+    ])
 
+    if article_url:
+        lines.append(f'article_url: "{_escape_yaml_string(str(article_url))}"')
+
+    lines.extend(tail_lines)
     lines.append("---")
     return "\n".join(lines) + "\n"
+
+
+def _build_frontmatter(
+    tweet: Tweet,
+    pillar: str,
+    bookmark_type: str,
+    title: str,
+    mechanics: tuple[str, ...] = (),
+    tags: tuple[str, ...] = (),
+) -> str:
+    """YAML block with all metadata fields for a freshly-synced bookmark."""
+    username = tweet.author.username if tweet.author else "unknown"
+    date_str = tweet.created_at.strftime("%Y-%m-%d")
+    tweet_url = f"https://x.com/{username}/status/{tweet.id}"
+    article_url = (
+        tweet.article_url if (bookmark_type == "article" and tweet.article_url) else None
+    )
+
+    return build_faceted_frontmatter(
+        title=title,
+        author=f"@{username}",
+        pillar=pillar,
+        mechanics=mechanics,
+        entity_tags=group_entity_tags(tags),
+        date=date_str,
+        read=False,
+        synthesized=False,
+        bookmark_type=bookmark_type,
+        tweet_url=tweet_url,
+        article_url=article_url,
+    )
 
 
 def _validate_frontmatter(frontmatter: str) -> str:
@@ -196,7 +249,9 @@ def write_bookmarks(
         filename = _build_filename(ct.title, existing_names)
         existing_names.add(filename)
 
-        frontmatter = _build_frontmatter(tweet, ct.category, bookmark_type, ct.title, ct.tags)
+        frontmatter = _build_frontmatter(
+            tweet, ct.pillar, bookmark_type, ct.title, ct.mechanics, ct.tags
+        )
         frontmatter = _validate_frontmatter(frontmatter)
         body = _format_article_body(tweet, ct.title) if is_article else _format_post_body(tweet, ct.title)
 

@@ -57,37 +57,47 @@ Before every commit and push:
 
 ## Generated Markdown Contract
 
-Generated bookmark notes must continue to follow this frontmatter schema:
+Generated bookmark notes must follow this frontmatter schema:
 
 ```yaml
 ---
 title: "..."
 author: "@handle"
-category: "..."
-subCategory: "..."
-date: 2026-02-25
+pillar: "Applied Practice"
+mechanics:
+  - tutorials
+  - automation
+entity_tags:
+  framework: [react]
+  tool: [docker]
+date: 2026-06-02
 read: false
 synthesized: false
 type: "post" # or "article"
 tweet_url: "https://x.com/..."
 article_url: "https://..." # optional — articles only
-tags: ["framework/langgraph"] # optional — entity tags (present only when configured)
 ---
 ```
 
 Rules:
 
 - all string fields must be double-quoted
-- `subCategory` must remain camelCase
-- deprecated fields must not be reintroduced
+- `pillar` must be a scalar string (exactly one of the configured pillar names)
+- `mechanics` is a YAML list; may be empty or omitted
+- `entity_tags` is a nested dict; must be omitted entirely when empty (not just `{}`)
+- deprecated fields (`category`, `subCategory`, legacy `tags`) must not be reintroduced
 - the first `##` heading in generated note bodies must match the frontmatter title exactly
 - use `## References` for outbound links
 
-## Category Taxonomy
+## Faceted Categorization Schema
 
-Categorization taxonomy logic lives in `src/taxonomy.py`, shared by `src/categorizer.py` and `src/migrate.py` (do not reintroduce per-module `_build_taxonomy_block` duplicates). Categories are derived from existing vault frontmatter, unioned with an optional user override file (`X_BOOKMARKS_TAXONOMY_FILE`), and fall back to the neutral built-in `DEFAULT_TAXONOMY` only when both are empty. The override file may also declare deprecated categories, freeform guidance appended to the prompt, and optional entity tags for lateral tagging. There is no hardcoded fixed category list; the shipped default must stay domain-neutral.
+Categorization logic lives in `src/taxonomy.py`, shared by `src/categorizer.py` and `src/migrate.py`. The schema is faceted:
 
-Entity tags (`entity_tags` frontmatter dict in override file) enable lateral tagging of specific tools, frameworks, models, and concepts. Tags use the format `prefix/entity-name` (e.g., `framework/langgraph`, `model/deepseek`). Entity tags are gated on configuration: when absent/empty, no tags are requested and the `tags:` frontmatter field is omitted. Allowed prefixes are closed (keys of the configured dict), but entities under those prefixes are open (Claude can discover new ones). Unknown-prefix tags are dropped during normalization.
+**Pillar** (required, scalar): One of a configured set of strategic modes. Pillars come from the override file if present (via `X_BOOKMARKS_TAXONOMY_FILE`), else the neutral `DEFAULT_PILLARS`. The tool does not read existing vault notes to discover pillars.
+
+**Mechanics** (optional, list): A controlled-vocabulary reference for techniques, concepts, or activities. The vocabulary comes from the override file if present, else `DEFAULT_MECHANICS` (empty). Claude can invent new mechanics when none fit the seed vocabulary. Mechanics are stored as a YAML list in frontmatter when present.
+
+**Entity tags** (optional, nested dict): Lateral tagging of specific tools, frameworks, models as `prefix/entity-name` (e.g., `tool/docker`, `framework/react`). Entity tags come from the override file if present, else empty. Allowed prefixes are closed (framework, harness, model, tool), but entities under those prefixes are open (Claude can discover new ones). Unknown-prefix tags are dropped. The entity_tags dict is omitted entirely from frontmatter when empty.
 
 ## X Bookmark Removal Safety
 

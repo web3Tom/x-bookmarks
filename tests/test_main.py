@@ -4,8 +4,8 @@ from datetime import datetime
 from unittest.mock import patch, MagicMock, call
 from pathlib import Path
 
-from src.main import main, _build_run_record, _append_history, _count_categories, _HISTORY_FILENAME
-from src.models import Tweet, User, Category, CategorizedTweet
+from src.main import main, _build_run_record, _append_history, _count_pillars, _HISTORY_FILENAME
+from src.models import Tweet, User, CategorizedTweet
 from src.config import Config
 from src.api_client import DeleteBookmarkResult
 
@@ -45,8 +45,9 @@ def _write_note(path: Path, tweet_id: str = "1", synthesized: str = "true") -> N
         "---\n"
         'title: "Test"\n'
         'author: "@test"\n'
-        'category: "AI Coding"\n'
-        'subCategory: "Coding Workflows"\n'
+        'pillar: "Applied Practice"\n'
+        "mechanics:\n"
+        "  - rag\n"
         "date: 2026-05-13\n"
         "read: false\n"
         f"synthesized: {synthesized}\n"
@@ -71,8 +72,7 @@ class TestMain:
         tweets = (_make_tweet("1"), _make_tweet("2"))
         mock_fetch.return_value = tweets
 
-        cat = Category(slug="general", display_name="General", sub_category="Uncategorized")
-        categorized = tuple(CategorizedTweet(tweet=t, category=cat, title="Hello") for t in tweets)
+        categorized = tuple(CategorizedTweet(tweet=t, pillar="Applied Practice", title="Hello") for t in tweets)
         mock_categorize.return_value = (categorized, {"input_tokens": 100, "output_tokens": 50})
 
         mock_write.return_value = _write_stats(2, filenames=["hello.md", "hello-2.md"])
@@ -80,7 +80,7 @@ class TestMain:
         main([])
 
         mock_fetch.assert_called_once_with(config)
-        mock_categorize.assert_called_once_with(tweets, api_key="sk-test", output_dir=tmp_path, override_file=None)
+        mock_categorize.assert_called_once_with(tweets, api_key="sk-test", override_file=None)
         mock_write.assert_called_once_with(categorized, tmp_path)
 
         output = capsys.readouterr().out
@@ -128,8 +128,7 @@ class TestMain:
         tweets = (article_tweet, _make_tweet("2"))
         mock_fetch.return_value = tweets
 
-        cat = Category(slug="general", display_name="General", sub_category="Uncategorized")
-        categorized = tuple(CategorizedTweet(tweet=t, category=cat, title="Hello") for t in tweets)
+        categorized = tuple(CategorizedTweet(tweet=t, pillar="Applied Practice", title="Hello") for t in tweets)
         mock_categorize.return_value = (categorized, {"input_tokens": 50, "output_tokens": 25})
         mock_write.return_value = _write_stats(2, filenames=["a.md", "b.md"])
 
@@ -153,8 +152,7 @@ class TestMain:
         tweets = (_make_tweet("1"), _make_tweet("2"))
         mock_fetch.return_value = tweets
 
-        cat = Category(slug="general", display_name="General", sub_category="Uncategorized")
-        categorized = tuple(CategorizedTweet(tweet=t, category=cat, title="Hello") for t in tweets)
+        categorized = tuple(CategorizedTweet(tweet=t, pillar="Applied Practice", title="Hello") for t in tweets)
         mock_categorize.return_value = (categorized, {"input_tokens": 50, "output_tokens": 25})
         mock_write.return_value = _write_stats(2, filenames=["a.md", "b.md"])
 
@@ -203,14 +201,13 @@ class TestMain:
         mock_fetch.return_value = (tweet_old, tweet_new)
         mock_existing.return_value = {"1"}
 
-        cat = Category(slug="general", display_name="General", sub_category="Uncategorized")
-        categorized = (CategorizedTweet(tweet=tweet_new, category=cat, title="Hello"),)
+        categorized = (CategorizedTweet(tweet=tweet_new, pillar="Applied Practice", title="Hello"),)
         mock_categorize.return_value = (categorized, {"input_tokens": 50, "output_tokens": 25})
         mock_write.return_value = _write_stats(1, filenames=["hello.md"])
 
         main([])
 
-        mock_categorize.assert_called_once_with((tweet_new,), api_key="sk-test", output_dir=tmp_path, override_file=None)
+        mock_categorize.assert_called_once_with((tweet_new,), api_key="sk-test", override_file=None)
         output = capsys.readouterr().out
         assert "Skipping 1 already-saved" in output
         assert "Categorizing 1 new bookmark(s)" in output
@@ -231,17 +228,15 @@ class TestMain:
         t2 = _make_tweet("2")
         mock_fetch.return_value = (t1, t2)
 
-        cat_ai = Category(slug="ai-coding", display_name="AI Coding", sub_category="Coding Workflows")
-        cat_ml = Category(slug="ml-research", display_name="ML Research", sub_category="Applied ML")
-        categorized = (CategorizedTweet(tweet=t1, category=cat_ai, title="Hello"), CategorizedTweet(tweet=t2, category=cat_ml, title="Hello"))
+        categorized = (CategorizedTweet(tweet=t1, pillar="Applied Practice", title="Hello"), CategorizedTweet(tweet=t2, pillar="Theory & Concepts", title="Hello"))
         mock_categorize.return_value = (categorized, {"input_tokens": 50, "output_tokens": 25})
         mock_write.return_value = _write_stats(2, filenames=["a.md", "b.md"])
 
         main([])
 
         output = capsys.readouterr().out
-        assert "AI Coding: 1" in output
-        assert "ML Research: 1" in output
+        assert "Applied Practice: 1" in output
+        assert "Theory & Concepts: 1" in output
 
     @patch("src.main.delete_bookmark")
     @patch("src.main.load_config")
@@ -299,9 +294,8 @@ class TestMain:
         mock_existing.return_value = set()
         tweets = (_make_tweet("1"),)
         mock_fetch.return_value = tweets
-        cat = Category(slug="general", display_name="General", sub_category="Uncategorized")
         mock_categorize.return_value = (
-            (CategorizedTweet(tweet=tweets[0], category=cat, title="Hello"),),
+            (CategorizedTweet(tweet=tweets[0], pillar="Applied Practice", title="Hello"),),
             {"input_tokens": 1, "output_tokens": 1},
         )
         mock_write.return_value = _write_stats(1, filenames=["hello.md"])
@@ -358,8 +352,7 @@ class TestRunHistory:
         tweets = (_make_tweet("1"),)
         mock_fetch.return_value = tweets
 
-        cat = Category(slug="general", display_name="General", sub_category="Uncategorized")
-        categorized = (CategorizedTweet(tweet=tweets[0], category=cat, title="Hello"),)
+        categorized = (CategorizedTweet(tweet=tweets[0], pillar="Applied Practice", title="Hello"),)
         mock_categorize.return_value = (categorized, {"input_tokens": 10, "output_tokens": 5})
         mock_write.return_value = _write_stats(1, filenames=["hello.md"])
 
@@ -391,8 +384,7 @@ class TestRunHistory:
         tweets = (_make_tweet("1"),)
         mock_fetch.return_value = tweets
 
-        cat = Category(slug="general", display_name="General", sub_category="Uncategorized")
-        categorized = (CategorizedTweet(tweet=tweets[0], category=cat, title="Hello"),)
+        categorized = (CategorizedTweet(tweet=tweets[0], pillar="Applied Practice", title="Hello"),)
         mock_categorize.return_value = (categorized, {"input_tokens": 10, "output_tokens": 5})
         mock_write.return_value = _write_stats(1, filenames=["a.md"])
 
@@ -464,20 +456,18 @@ class TestAppendHistory:
         assert len(lines) == 2
 
 
-class TestCountCategories:
+class TestCountPillars:
     def test_counts(self):
         t1 = _make_tweet("1")
         t2 = _make_tweet("2")
         t3 = _make_tweet("3")
-        cat_a = Category(slug="ai-coding", display_name="AI Coding", sub_category="Coding Workflows")
-        cat_b = Category(slug="ml-research", display_name="ML Research", sub_category="Applied ML")
         categorized = (
-            CategorizedTweet(tweet=t1, category=cat_a, title="Hello"),
-            CategorizedTweet(tweet=t2, category=cat_a, title="Hello"),
-            CategorizedTweet(tweet=t3, category=cat_b, title="Hello"),
+            CategorizedTweet(tweet=t1, pillar="Applied Practice", title="Hello"),
+            CategorizedTweet(tweet=t2, pillar="Applied Practice", title="Hello"),
+            CategorizedTweet(tweet=t3, pillar="Theory & Concepts", title="Hello"),
         )
-        result = _count_categories(categorized)
-        assert result == {"AI Coding": 2, "ML Research": 1}
+        result = _count_pillars(categorized)
+        assert result == {"Applied Practice": 2, "Theory & Concepts": 1}
 
     def test_empty(self):
-        assert _count_categories(()) == {}
+        assert _count_pillars(()) == {}

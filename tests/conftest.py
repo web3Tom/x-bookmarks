@@ -87,22 +87,24 @@ def tmp_output_dir(tmp_path):
 
 @pytest.fixture
 def valid_override_file(tmp_path):
-    """Create a valid taxonomy override file."""
+    """Create a valid faceted taxonomy override file."""
     override_file = tmp_path / "taxonomy.md"
     override_file.write_text(
         "---\n"
-        "taxonomy:\n"
-        "  AI:\n"
-        "    - Coding\n"
-        "    - Reasoning\n"
-        "  Business:\n"
-        "    - Finance\n"
+        "pillars:\n"
+        "  - Theory & Concepts\n"
+        "  - Applied Practice\n"
+        "mechanics:\n"
+        "  - rag\n"
+        "  - persistent-memory\n"
+        "entity_tags:\n"
+        "  model: [deepseek, llama3]\n"
         "deprecate:\n"
         "  - General\n"
         "  - Uncategorized\n"
         "---\n\n"
         "## Domain Guidance\n\n"
-        "Prefer AI and Business categories for bookmarks.\n"
+        "Prefer Applied Practice for hands-on bookmarks.\n"
     )
     return override_file
 
@@ -113,7 +115,7 @@ def malformed_override_file(tmp_path):
     override_file = tmp_path / "bad_taxonomy.md"
     override_file.write_text(
         "---\n"
-        "taxonomy: [invalid list, not dict\n"
+        "pillars: [invalid list, not closed\n"
         "---\n"
     )
     return override_file

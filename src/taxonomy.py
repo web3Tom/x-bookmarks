@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -9,11 +10,13 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass(frozen=True)
 class TaxonomyOverride:
     """Parsed taxonomy override file with all optional fields."""
 
-    taxonomy: dict[str, list[str]] | None = None
+    pillars: tuple[str, ...] | None = None
+    mechanics: tuple[str, ...] | None = None
     entity_tags: dict[str, list[str]] = None  # type: ignore
     deprecations: list[str] | None = None
     guidance: str | None = None
@@ -24,45 +27,62 @@ class TaxonomyOverride:
             object.__setattr__(self, "entity_tags", {})
 
 
-# Neutral, domain-agnostic default taxonomy (no catch-all/"Miscellaneous" bucket)
-DEFAULT_TAXONOMY: dict[str, list[str]] = {
-    "Technology": [
-        "Software Development",
-        "Hardware",
-        "Infrastructure & DevOps",
-        "Data & Analytics",
-    ],
-    "Business & Finance": [
-        "Markets & Investing",
-        "Entrepreneurship",
-        "Career",
-    ],
-    "Science & Research": [
-        "Research & Papers",
-        "Engineering",
-        "Environment",
-    ],
-    "Health & Wellness": [
-        "Fitness",
-        "Nutrition",
-        "Mental Health",
-    ],
-    "Learning & Education": [
-        "Tutorials & Guides",
-        "Books",
-        "Courses",
-    ],
-    "Culture & Society": [
-        "Arts & Media",
-        "Politics & Policy",
-        "History",
-    ],
-    "Productivity & Tools": [
-        "Workflows",
-        "Apps & Utilities",
-        "Automation",
-    ],
-}
+# Neutral, domain-agnostic default pillars (name -> focus). The user's real
+# domain pillars live only in the private override file, never in this repo.
+DEFAULT_PILLARS: tuple[tuple[str, str], ...] = (
+    ("Theory & Concepts", "Foundational ideas, research, and how things work conceptually."),
+    ("Applied Practice", "Building, implementing, and hands-on workflows."),
+    ("Operations", "Deploying, measuring, securing, and maintaining systems."),
+    ("Strategy", "Business, career, market, and human/decision elements."),
+)
+DEFAULT_PILLAR_NAMES: tuple[str, ...] = tuple(name for name, _ in DEFAULT_PILLARS)
+
+# Neutral default mechanics vocabulary (empty; seeded via the override file).
+DEFAULT_MECHANICS: tuple[str, ...] = ()
+
+# Closed set of allowed entity-tag prefixes (nouns). `provider` and `concept`
+# were dropped in the faceted refactor — concepts live in `mechanics` now.
+ENTITY_PREFIXES: tuple[str, ...] = ("framework", "harness", "model", "tool")
+
+
+def _slugify(value: str) -> str:
+    """Lowercase kebab-case slug: spaces/underscores -> -, drop chars outside
+    [a-z0-9-], collapse repeats, trim edges. Mirrors the vault-migration rule."""
+    slug = value.lower().strip()
+    slug = re.sub(r"[\s_]+", "-", slug)
+    slug = re.sub(r"[^a-z0-9-]", "", slug)
+    slug = re.sub(r"-{2,}", "-", slug)
+    return slug.strip("-")
+
+
+def slugify_mechanic(value: str) -> str | None:
+    """Slugify a single mechanic; return None if nothing survives."""
+    return _slugify(value) or None
+
+
+def normalize_mechanics(raw: Iterable[str] | None) -> tuple[str, ...]:
+    """Slugify a list of mechanics, dedupe (first-seen order), drop empties."""
+    if not raw:
+        return ()
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in raw:
+        slug = slugify_mechanic(str(item))
+        if slug and slug not in seen:
+            result.append(slug)
+            seen.add(slug)
+    return tuple(result)
+
+
+def validate_pillar(raw: str, allowed: Sequence[str], fallback: str) -> str:
+    """Return `raw` if it is one of `allowed`, else `fallback` with a loud warning."""
+    if raw in allowed:
+        return raw
+    logger.warning(
+        "Pillar %r not in allowed pillars %s — falling back to %r",
+        raw, list(allowed), fallback,
+    )
+    return fallback
 
 
 def normalize_tag(raw: str, allowed_prefixes: set[str] | None = None) -> str | None:
@@ -128,6 +148,28 @@ def normalize_tags(
     return tuple(result)
 
 
+def group_entity_tags(tags: Iterable[str]) -> dict[str, list[str]]:
+    """Split flat `prefix/entity` tags into a nested {prefix: [entity, ...]} dict.
+
+    Only keeps prefixes in ENTITY_PREFIXES, in that fixed order. Dedupes entities
+    within each prefix (first-seen order). Returns {} when nothing qualifies.
+    """
+    grouped: dict[str, list[str]] = {}
+    for tag in tags:
+        if "/" not in tag:
+            continue
+        prefix, entity = tag.split("/", 1)
+        prefix = prefix.strip()
+        entity = entity.strip()
+        if prefix not in ENTITY_PREFIXES or not entity:
+            continue
+        bucket = grouped.setdefault(prefix, [])
+        if entity not in bucket:
+            bucket.append(entity)
+    # Re-emit in fixed prefix order
+    return {p: grouped[p] for p in ENTITY_PREFIXES if p in grouped}
+
+
 def build_entity_tags_section(entity_tags: dict[str, list[str]]) -> str:
     """Build a formatted reference block of allowed entity tags.
 
@@ -144,20 +186,26 @@ def build_entity_tags_section(entity_tags: dict[str, list[str]]) -> str:
     return "\n".join(lines)
 
 
-def build_taxonomy_section(taxonomy: dict[str, set[str] | list[str]]) -> str:
-    """Build a formatted bulleted category/subcategory block from a taxonomy dict.
-
-    Accepts either sets or lists of subcategories; converts sets to sorted lists.
-    Returns a string with "- Category" then "  - Subcategory" lines, sorted.
-    """
+def build_pillars_section(
+    pillars: Sequence[str],
+    descriptions: Mapping[str, str] | None = None,
+) -> str:
+    """Build a bulleted list of pillars, with optional `- Name: focus` descriptions."""
     lines: list[str] = []
-    for category, subs in sorted(taxonomy.items()):
-        lines.append(f"- {category}")
-        # Convert to list if it's a set, then sort
-        sub_list = sorted(subs) if isinstance(subs, (set, list)) else []
-        for sub in sub_list:
-            lines.append(f"  - {sub}")
+    for name in pillars:
+        focus = descriptions.get(name) if descriptions else None
+        lines.append(f"- {name}: {focus}" if focus else f"- {name}")
     return "\n".join(lines)
+
+
+def build_mechanics_section(mechanics: Sequence[str]) -> str:
+    """Build a comma-separated reference list of established mechanics.
+
+    Returns empty string when no mechanics are provided.
+    """
+    if not mechanics:
+        return ""
+    return ", ".join(sorted(set(mechanics)))
 
 
 def _split_frontmatter_body(content: str) -> tuple[str, str]:
@@ -179,11 +227,18 @@ def _split_frontmatter_body(content: str) -> tuple[str, str]:
     return yaml_block, body
 
 
+def _coerce_str_list(value: object) -> tuple[str, ...] | None:
+    """Coerce a YAML value into a tuple of stripped strings, or None if not a list."""
+    if not isinstance(value, list):
+        return None
+    return tuple(str(item).strip() for item in value if str(item).strip())
+
+
 def load_taxonomy_override(filepath: Path | None) -> TaxonomyOverride | None:
     """Load and parse a taxonomy override file completely.
 
     Reads the YAML frontmatter and Markdown body once. Type-guards all fields.
-    Returns TaxonomyOverride with all four fields populated (or None values).
+    Returns TaxonomyOverride with pillars/mechanics/entity_tags/deprecations/guidance.
     Returns None if filepath is None or file is missing/unreadable.
     Logs warnings on errors; on YAML errors returns safe defaults with body text.
     """
@@ -206,22 +261,19 @@ def load_taxonomy_override(filepath: Path | None) -> TaxonomyOverride | None:
     except yaml.YAMLError as exc:
         logger.warning("Failed to parse YAML in override file %s: %s", filepath, exc)
         # Return safe defaults with body text preserved
-        return TaxonomyOverride(
-            taxonomy=None,
-            entity_tags={},
-            deprecations=None,
-            guidance=body.strip() or None,
-        )
+        return TaxonomyOverride(guidance=body.strip() or None)
 
     if not isinstance(parsed, dict):
         logger.warning("Override file frontmatter is not a YAML dict: %s", filepath)
-        return TaxonomyOverride(taxonomy=None, entity_tags={}, deprecations=None, guidance=body.strip() or None)
+        return TaxonomyOverride(guidance=body.strip() or None)
 
-    # Type-guard each field
-    taxonomy = parsed.get("taxonomy")
-    if taxonomy is not None and not isinstance(taxonomy, dict):
-        logger.warning("Override file 'taxonomy:' is not a dict: %s", filepath)
-        taxonomy = None
+    pillars = _coerce_str_list(parsed.get("pillars"))
+    if parsed.get("pillars") is not None and pillars is None:
+        logger.warning("Override file 'pillars:' is not a list: %s", filepath)
+
+    mechanics = _coerce_str_list(parsed.get("mechanics"))
+    if parsed.get("mechanics") is not None and mechanics is None:
+        logger.warning("Override file 'mechanics:' is not a list: %s", filepath)
 
     entity_tags = parsed.get("entity_tags")
     if entity_tags is not None and not isinstance(entity_tags, dict):
@@ -236,23 +288,12 @@ def load_taxonomy_override(filepath: Path | None) -> TaxonomyOverride | None:
     guidance = body.strip() or None
 
     return TaxonomyOverride(
-        taxonomy=taxonomy,
+        pillars=pillars,
+        mechanics=mechanics,
         entity_tags=entity_tags or {},
         deprecations=deprecations,
         guidance=guidance,
     )
-
-
-def load_override_file(filepath: Path | None) -> dict[str, list[str]] | None:
-    """Load taxonomy from override file's YAML frontmatter.
-
-    Delegates to load_taxonomy_override; returns only the taxonomy dict.
-    Returns None if: filepath is None, file missing, malformed YAML, or no `taxonomy:` key.
-    """
-    override = load_taxonomy_override(filepath)
-    if override is None or override.taxonomy is None:
-        return None
-    return override.taxonomy
 
 
 def parse_deprecations(filepath: Path | None) -> list[str] | None:
@@ -290,26 +331,3 @@ def parse_entity_tags(filepath: Path | None) -> dict[str, list[str]]:
     if override is None:
         return {}
     return override.entity_tags
-
-
-def merge_taxonomies(
-    vault: dict[str, set[str]],
-    override: dict[str, list[str]] | None,
-) -> dict[str, set[str]]:
-    """Merge vault and override taxonomies using union semantics.
-
-    Every category and subcategory from override is added to the result.
-    Subcategories are unioned as sets.
-    If override is None, returns vault unchanged.
-    """
-    if override is None:
-        return vault
-
-    result = {cat: set(subs) for cat, subs in vault.items()}
-
-    for cat, subs in override.items():
-        if cat not in result:
-            result[cat] = set()
-        result[cat].update(subs if isinstance(subs, list) else [])
-
-    return result

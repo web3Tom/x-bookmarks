@@ -1,156 +1,116 @@
 ---
 # Taxonomy Override File for x-bookmarks
 #
-# This is the maintainer's real, in-production AI/engineering taxonomy — the same
-# scheme used to organize a ~615-note bookmark vault. Copy it and edit to taste, or
-# read it as a worked example of how a mature override file looks.
+# This is an example of a domain-specific taxonomy override. Copy and edit to taste,
+# or read it as a worked example of how a mature override file looks.
 #
-# FORMAT:
+# FORMAT (all keys optional):
 # -------
-#   taxonomy:    Dict mapping Category (Domain) -> list of subcategories (Disciplines)
-#   entity_tags: Dict mapping facet prefixes to known entities. Claude tags specific
-#                tools/frameworks/models/concepts as `prefix/entity` (e.g. `framework/langgraph`).
-#                Prefixes are CLOSED (only these keys); entities are OPEN (Claude may add new ones).
-#   deprecate:   List of categories to steer Claude away from (e.g. legacy/ad-hoc labels).
+#   pillars:      List of custom pillar names (replaces the 4 neutral defaults)
+#   mechanics:    Controlled vocabulary of categorization mechanics (flat list of dashed slugs)
+#   entity_tags:  Dict mapping facet prefixes to known entities. Claude tags specific
+#                 tools, frameworks, models as `prefix/entity` (e.g. `tool/docker`).
+#                 Prefixes are CLOSED (only these 4 keys allowed); entities are OPEN.
+#   deprecate:    List of pillar/mechanic values to steer Claude away from.
 #
-# Note: this override is MERGED (union) with whatever categories already exist in your
-# vault. The shipped DEFAULT_TAXONOMY (used only when vault AND override are empty) stays
-# domain-neutral and is unaffected by this file.
+# Note: the override file's pillars, mechanics, and entity_tags REPLACE the neutral
+# defaults when you provide them. Fields you omit fall back to the neutral defaults.
+# The tool does not read your existing vault notes to build the taxonomy.
 # ---
 
-taxonomy:
-  'Agentic Systems':
-    - Agent Harnesses
-    - Agent Design & Patterns
-    - Multi-Agent Systems
-    - Agent Memory & Context
-    - RAG & Retrieval
-    - Evals & Observability
-    - Autonomous Agents
-    - Agent Skills & Marketplaces
-  'Development & Tooling':
-    - Coding Workflows
-    - Coding Agents
-    - Prompt & Context Engineering
-    - Agent Infrastructure
-    - Agent Skills
-    - Docs & Knowledge Tooling
-    - MCP & Integrations
-    - Dev Environment & Terminal
-    - Testing & QA
-    - Planning & Spec
-  'Models & Inference':
-    - Foundation Models
-    - Serving & Endpoints
-    - Model Routing
-    - ML Research
-    - Applied ML
-  'Strategy & Ontology':
-    - AI-Augmented Vaults
-    - PKM Methodology
-    - Capture & Ingestion
-    - Personal AI Operating Systems
-    - Knowledge Graphs & Ontology
-    - Monetization & Income
-    - AI Services & Agencies
-    - Go-To-Market & Growth
-    - Startups & Business Models
-    - Market Analysis & Theses
-  'Execution & Career':
-    - Career Strategy
-    - Skill-Building & Roadmaps
-    - Mindset & Psychology
-    - Engineering Judgment
-    - Performance & Habits
-  'Security & Privacy':
-    - Privacy & Anonymity
-    - Security Practices & Threats
-    - Networking & Infrastructure
-  'Society & Commentary':
-    - Politics & Policy
-    - Conspiracy & Fringe
+pillars:
+  - Applied Practice
+  - Theory & Concepts
+  - Operations
+  - Strategy
 
-# Known seeds only — Claude may discover new entities under each (closed) prefix.
+mechanics:
+  - tutorials
+  - automation
+  - design-patterns
+  - case-studies
+  - performance-optimization
+  - data-pipelines
+  - testing-strategies
+  - integration-workflows
+  - debugging-techniques
+  - architecture
+  - best-practices
+  - troubleshooting
+  - frameworks-overview
+  - workflow-comparison
+  - ecosystem-tools
+  - note-taking
+  - knowledge-management
+  - ai-systems
+
+# Allowed prefixes: framework, harness, model, tool (closed set)
+# Claude may discover new entities under each prefix (open vocabulary)
 entity_tags:
   framework:
+    - react
     - langgraph
     - langchain
-    - crewai
-    - letta
-    - mastra
-    - autogen
+    - flask
+    - fastapi
+    - django
   harness:
-    - hermes
-    - openclaw
-    - pi
-    - droid
-    - flue
+    - vscode
+    - cursor
   model:
-    - claude-opus
-    - claude-sonnet
-    - kimi-k2
-    - deepseek
-    - minimax
     - gpt
-    - qwen3
-    - gemini
-  provider:
-    - anthropic
-    - openai
-    - google
-    - openrouter
-    - nvidia
+    - claude
+    - llama
+    - deepseek
   tool:
-    - claude-code
-    - codex
+    - docker
+    - git
     - obsidian
-    - mcp
-    - notebooklm
-    - qmd
     - tmux
-    - llama-cpp
-  concept:
-    - multi-agent
-    - harness-engineering
-    - context-engineering
-    - rag
-    - persistent-memory
-    - prompt-caching
-    - vibe-coding
-    - second-brain
-    - knowledge-graph
-    - services-as-software
+    - graphql
 
-# Legacy / ad-hoc labels this taxonomy replaced — keep Claude from recreating them.
+# Legacy / ad-hoc mechanics this taxonomy replaced — keep Claude from recreating them.
 deprecate:
-  - General
-  - Uncategorized
-  - Technology
-  - 'Miscellaneous/Other'
-  - Agent Architectures
-  - AI Coding
-  - Context Engineering
-  - Model Systems
-  - AI Productivity
-  - Unrelated Content
+  - general
+  - uncategorized
+  - misc
 ---
 
 ## Domain Guidance
 
-Category (Domain) + Subcategory (Discipline) capture _what the post is fundamentally about_.
-Tags capture _the specific tools, frameworks, models, or concepts named in it_.
+**Pillars** capture the mode of thinking required:
+- **Applied Practice:** Hands-on implementation, workflows, tutorials, code examples, how-to guides
+- **Theory & Concepts:** Foundational ideas, research papers, conceptual frameworks, why things work
+- **Operations:** Deployment, monitoring, security, scaling, reliability, maintaining systems
+- **Strategy:** Business models, market analysis, career decisions, organizational dynamics
 
-### Worked examples
+**Mechanics** are the specific techniques, concepts, or activities described:
+- Use `tutorials` for step-by-step guides, walkthroughs, or how-to posts
+- Use `automation` for scripting, workflows, or efficiency patterns
+- Use `performance-optimization` for speed, cost, token-usage improvements
+- Use `data-pipelines` for ETL, data processing, streaming workflows
+- Use `testing-strategies` for test methodology, QA approaches
+- Use `design-patterns` for architectural or software design principles
+- Use `best-practices` for conventions, standards, or recommended approaches
+- Use `case-studies` for real-world examples, failures, or post-mortems
+- Combine mechanics freely (one post can have 2–5 mechanics)
 
-- Hermes' layered memory architecture → **Agentic Systems / Agent Memory & Context**, tags `["harness/hermes", "concept/persistent-memory"]`
-- A Claude Code workflow that cuts token usage 60% → **Development & Tooling / Prompt & Context Engineering**, tags `["tool/claude-code", "concept/token-optimization"]`
-- Benchmarking DeepSeek via OpenRouter for cost → **Models & Inference / Model Routing**, tags `["model/deepseek", "provider/openrouter"]`
-- Building a second brain in Obsidian with Claude Code → **Strategy & Ontology / AI-Augmented Vaults**, tags `["tool/obsidian", "tool/claude-code", "concept/second-brain"]`
+**Entity tags** are specific tools, frameworks, models, or products named in the post:
+- **framework:** Web frameworks, libraries you import, orchestration SDKs (react, langgraph, fastapi)
+- **harness:** Development environments or end-user platforms (vscode, cursor)
+- **model:** LLM names, specific model checkpoints (gpt, claude, llama, deepseek)
+- **tool:** Standalone CLI tools, utilities, infrastructure services (docker, git, obsidian, tmux)
 
-### Disambiguation rules (the non-obvious calls)
+### Worked Examples
 
-- **Harness vs framework vs coding-agent:** a harness *product*/platform or harness-engineering essay → `Agentic Systems / Agent Harnesses`; a library you import to build agents (LangGraph, LangChain, an SDK) → `Development & Tooling / Coding Agents`; vendor-neutral architecture principles → `Agentic Systems / Agent Design & Patterns`.
-- **Agent memory vs human PKM:** the *agent's* internal memory → `Agentic Systems / Agent Memory & Context`; a *human's* knowledge vault that merely uses an agent → `Strategy & Ontology / AI-Augmented Vaults`.
-- **Inference substrate vs the model:** local inference, GPUs, quantization, inference chips → `Models & Inference / Serving & Endpoints`; a specific model's release/capabilities → `Foundation Models`; cost/use-case selection across models → `Model Routing`.
-- **Off-topic content** (not AI/eng): politics/policy/sovereignty → `Society & Commentary / Politics & Policy`; conspiracy/pseudoscience/fringe → `Society & Commentary / Conspiracy & Fringe`.
-- No catch-all. Never assign `General`, `Uncategorized`, or any deprecated label — pick the closest real discipline instead.
+- A Docker + Kubernetes deployment guide → **Applied Practice + Operations**, mechanics `[tutorials, automation]`, tags `["tool/docker"]`
+- A research paper on transformer attention → **Theory & Concepts**, mechanics `[design-patterns]`, tags `["model/llama"]`
+- A performance tuning case study using Claude API → **Applied Practice**, mechanics `[case-studies, performance-optimization]`, tags `["model/claude", "tool/obsidian"]`
+- A testing methodology for data pipelines → **Applied Practice + Operations**, mechanics `[data-pipelines, testing-strategies]`, tags `["framework/fastapi"]`
+
+### Disambiguation Notes
+
+- **Tutorial vs. Case Study:** a step-by-step guide → `tutorials`; a real-world outcome (success or failure analysis) → `case-studies`
+- **Framework vs. Tool:** a library you import (React, LangGraph, FastAPI) → `framework`; a standalone binary (Docker, Git, Obsidian) → `tool`
+- **Theory vs. Applied:** a research paper or conceptual deep-dive → **Theory & Concepts**; implementation guidance → **Applied Practice**
+- No catch-all pillar. Always pick the nearest fit; if unsure, pick **Applied Practice**

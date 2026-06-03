@@ -162,10 +162,10 @@ def _build_removal_record(
     return record
 
 
-def _count_categories(categorized: tuple) -> dict[str, int]:
+def _count_pillars(categorized: tuple) -> dict[str, int]:
     counts: dict[str, int] = {}
     for ct in categorized:
-        key = ct.category.display_name
+        key = ct.pillar
         counts[key] = counts.get(key, 0) + 1
     return dict(sorted(counts.items()))
 
@@ -377,7 +377,6 @@ def _run_sync(config, run_id: str, started_at: str, t_start: float) -> None:
     categorized, usage = categorize_tweets(
         novel,
         api_key=config.anthropic_api_key,
-        output_dir=config.output_dir,
         override_file=config.taxonomy_file,
     )
 
@@ -389,7 +388,7 @@ def _run_sync(config, run_id: str, started_at: str, t_start: float) -> None:
         print(f"  + {fname}")
 
 
-    category_counts = _count_categories(categorized)
+    pillar_counts = _count_pillars(categorized)
 
     duration_ms = int((time.monotonic() - t_start) * 1000)
 
@@ -402,10 +401,10 @@ def _run_sync(config, run_id: str, started_at: str, t_start: float) -> None:
     print(f"Tokens used:        {usage['input_tokens']} in / {usage['output_tokens']} out")
     print(f"Duration:           {duration_ms}ms")
 
-    if category_counts:
-        print("\nCategories:")
-        for cat, count in category_counts.items():
-            print(f"  {cat}: {count}")
+    if pillar_counts:
+        print("\nPillars:")
+        for pillar, count in pillar_counts.items():
+            print(f"  {pillar}: {count}")
 
     record = _build_run_record(
         run_id=run_id, status="success", started_at=started_at,
@@ -414,7 +413,7 @@ def _run_sync(config, run_id: str, started_at: str, t_start: float) -> None:
         articles=article_count, files_written=stats["files_written"],
         duplicates_skipped=stats["duplicates_skipped"],
         filenames=filenames, token_usage=usage,
-        categories=category_counts,
+        categories=pillar_counts,
     )
     history_path = _append_history(config.output_dir, record)
     print(f"\n[{run_id}] History appended to {history_path}")

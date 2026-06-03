@@ -8,12 +8,12 @@ from src.categorizer import (
     build_prompt_payload,
     parse_categorization_response,
     categorize_tweets,
-    _slugify,
     _sanitize_title,
     _build_system_prompt,
-    read_existing_taxonomy,
+    _resolve_facets,
 )
-from src.models import Tweet, Category, CategorizedTweet, User
+from src.models import Tweet, CategorizedTweet, User
+from src.taxonomy import DEFAULT_PILLAR_NAMES, DEFAULT_MECHANICS, TaxonomyOverride
 
 
 def _make_tweet(id: str, text: str, username: str = "user") -> Tweet:
@@ -28,22 +28,6 @@ def _make_tweet(id: str, text: str, username: str = "user") -> Tweet:
         external_links=(),
         note_tweet_text=None,
         article_url=None,
-    )
-
-
-_FRONTMATTER_TEMPLATE = (
-    '---\ntitle: "{title}"\nauthor: "@{username}"\n'
-    'category: "{category}"\nsubCategory: "{sub}"\n'
-    'date: 2025-01-01\nread: false\ntype: "post"\n'
-    'tweet_url: "https://x.com/{username}/status/{id}"\n---\n\n## {title}\n\n> tweet text\n'
-)
-
-
-def _write_bookmark(path: Path, *, title: str, username: str, category: str, sub: str, id: str) -> None:
-    path.write_text(
-        _FRONTMATTER_TEMPLATE.format(
-            title=title, username=username, category=category, sub=sub, id=id
-        )
     )
 
 
@@ -114,186 +98,6 @@ class TestBuildPromptPayload:
         assert "article_excerpt" not in parsed[0]
 
 
-class TestSlugify:
-    def test_simple_name(self):
-        assert _slugify("AI Coding") == "ai-coding"
-
-    def test_ampersand(self):
-        assert _slugify("AI Product & Strategy") == "ai-product-strategy"
-
-    def test_multiple_spaces(self):
-        assert _slugify("ML  Research") == "ml-research"
-
-    def test_general(self):
-        assert _slugify("General") == "general"
-
-
-class TestReadExistingTaxonomy:
-    def test_returns_empty_when_dir_missing(self, tmp_path):
-        result = read_existing_taxonomy(tmp_path / "nonexistent")
-        assert result == {}
-
-    def test_reads_category_and_subcategory(self, tmp_path):
-        _write_bookmark(
-            tmp_path / "2025-01-01-user.md",
-            title="Test", username="user", category="AI Coding", sub="Coding Workflows", id="1",
-        )
-        result = read_existing_taxonomy(tmp_path)
-        assert result == {"AI Coding": {"Coding Workflows"}}
-
-    def test_aggregates_multiple_files(self, tmp_path):
-        _write_bookmark(tmp_path / "a.md", title="A", username="u1", category="AI Coding", sub="Coding Workflows", id="1")
-        _write_bookmark(tmp_path / "b.md", title="B", username="u2", category="AI Coding", sub="Prompt & Context Engineering", id="2")
-        _write_bookmark(tmp_path / "c.md", title="C", username="u3", category="ML Research", sub="Applied ML", id="3")
-        result = read_existing_taxonomy(tmp_path)
-        assert result == {
-            "AI Coding": {"Coding Workflows", "Prompt & Context Engineering"},
-            "ML Research": {"Applied ML"},
-        }
-
-    def test_skips_files_without_both_fields(self, tmp_path):
-        (tmp_path / "2025-01-01-user.md").write_text('---\ntitle: "No category here"\n---')
-        result = read_existing_taxonomy(tmp_path)
-        assert result == {}
-
-    def test_returns_empty_when_dir_is_empty(self, tmp_path):
-        result = read_existing_taxonomy(tmp_path)
-        assert result == {}
-
-
-class TestBuildSystemPrompt:
-    def test_empty_taxonomy_prohibits_general_and_uncategorized(self):
-        prompt = _build_system_prompt({})
-        assert 'Do NOT use "General" or "Uncategorized"' in prompt
-
-    def test_empty_taxonomy_first_run_message(self):
-        prompt = _build_system_prompt({})
-        assert "first run" in prompt
-
-    def test_populated_taxonomy_lists_existing_categories(self):
-        taxonomy = {"AI Coding": {"Coding Workflows"}, "ML Research": {"Applied ML"}}
-        prompt = _build_system_prompt(taxonomy)
-        assert "AI Coding" in prompt
-        assert "Coding Workflows" in prompt
-        assert "ML Research" in prompt
-        assert "Applied ML" in prompt
-
-    def test_populated_taxonomy_prohibits_general_and_uncategorized(self):
-        prompt = _build_system_prompt({"AI Coding": {"Coding Workflows"}})
-        assert 'Do NOT use "General" or "Uncategorized"' in prompt
-
-    def test_contains_title_generation_rules(self):
-        prompt = _build_system_prompt({})
-        assert "max 80 chars" in prompt
-        assert "YAML-safe" in prompt
-
-    def test_allows_new_categories_when_taxonomy_exists(self):
-        prompt = _build_system_prompt({"AI Coding": {"Coding Workflows"}})
-        assert "Title Case" in prompt
-
-    def test_prefers_existing_categories(self):
-        prompt = _build_system_prompt({"AI Coding": {"Coding Workflows"}})
-        assert "Prefer the existing" in prompt
-
-    def test_contains_response_format_example(self):
-        prompt = _build_system_prompt({})
-        assert "tweet_id" in prompt
-        assert "sub_category" in prompt
-
-    def test_includes_deprecations_when_provided(self):
-        taxonomy = {"AI": {"Coding"}}
-        deprecations = ["General", "Uncategorized/Other"]
-        prompt = _build_system_prompt(taxonomy, deprecations=deprecations)
-        assert "Avoid these categories" in prompt
-        assert "General" in prompt
-        assert "Uncategorized/Other" in prompt
-
-    def test_includes_guidance_when_provided(self):
-        taxonomy = {"AI": {"Coding"}}
-        guidance = "Always prefer AI categories for tech content."
-        prompt = _build_system_prompt(taxonomy, guidance=guidance)
-        assert "Domain guidance:" in prompt
-        assert guidance in prompt
-
-    def test_deprecations_and_guidance_together(self):
-        taxonomy = {"Tech": {"Software"}}
-        deprecations = ["Old"]
-        guidance = "New rules apply."
-        prompt = _build_system_prompt(taxonomy, deprecations=deprecations, guidance=guidance)
-        assert "Avoid these categories" in prompt
-        assert "Old" in prompt
-        assert "Domain guidance:" in prompt
-        assert "New rules apply." in prompt
-
-
-class TestParseCategorizationResponse:
-    def test_parse_clean_json(self):
-        response = json.dumps([
-            {"tweet_id": "1", "category": "AI Coding", "sub_category": "Coding Workflows", "title": "Python Coding Tips"},
-            {"tweet_id": "2", "category": "ML Research", "sub_category": "Applied ML", "title": "New LLM Benchmarks"},
-        ])
-        result = parse_categorization_response(response)
-        assert len(result) == 2
-        cat1, title1, tags1 = result["1"]
-        assert cat1 == Category(slug="ai-coding", display_name="AI Coding", sub_category="Coding Workflows")
-        assert title1 == "Python Coding Tips"
-        assert tags1 == []
-        cat2, title2, tags2 = result["2"]
-        assert cat2 == Category(slug="ml-research", display_name="ML Research", sub_category="Applied ML")
-        assert title2 == "New LLM Benchmarks"
-        assert tags2 == []
-
-    def test_parse_markdown_fenced_json(self):
-        response = '```json\n[{"tweet_id": "1", "category": "Agent Architectures", "sub_category": "Applied Agents", "title": "Multi-Agent Orchestration"}]\n```'
-        result = parse_categorization_response(response)
-        assert len(result) == 1
-        cat, title, tags = result["1"]
-        assert cat.slug == "agent-architectures"
-        assert cat.sub_category == "Applied Agents"
-        assert title == "Multi-Agent Orchestration"
-        assert tags == []
-
-    def test_parse_with_backtick_only(self):
-        response = '```\n[{"tweet_id": "1", "category": "Model Systems", "sub_category": "Inference & Serving", "title": "vLLM Serving Guide"}]\n```'
-        result = parse_categorization_response(response)
-        cat, title, tags = result["1"]
-        assert cat.slug == "model-systems"
-        assert cat.sub_category == "Inference & Serving"
-        assert title == "vLLM Serving Guide"
-        assert tags == []
-
-    def test_empty_response_returns_empty(self):
-        result = parse_categorization_response("[]")
-        assert result == {}
-
-    def test_slug_generated_from_category(self):
-        response = json.dumps([
-            {"tweet_id": "1", "category": "AI Product & Strategy", "sub_category": "Monetization & GTM", "title": "AI Startup Pricing"},
-        ])
-        result = parse_categorization_response(response)
-        cat, _, _ = result["1"]
-        assert cat.slug == "ai-product-strategy"
-
-    def test_missing_title_returns_empty_string(self):
-        response = json.dumps([
-            {"tweet_id": "1", "category": "AI Coding", "sub_category": "Coding Workflows"},
-        ])
-        result = parse_categorization_response(response)
-        _, title, tags = result["1"]
-        assert title == ""
-        assert tags == []
-
-    def test_parse_with_tags(self):
-        response = json.dumps([
-            {"tweet_id": "1", "category": "AI Coding", "sub_category": "Coding Workflows", "title": "LangGraph Tips", "tags": ["framework/langgraph", "concept/agentic"]},
-        ])
-        result = parse_categorization_response(response)
-        cat, title, tags = result["1"]
-        assert cat.slug == "ai-coding"
-        assert title == "LangGraph Tips"
-        assert tags == ["framework/langgraph", "concept/agentic"]
-
-
 class TestSanitizeTitle:
     def test_removes_newlines(self):
         assert _sanitize_title("Line 1\nLine 2\rLine 3") == "Line 1 Line 2 Line 3"
@@ -317,144 +121,507 @@ class TestSanitizeTitle:
         assert _sanitize_title("Simple title") == "Simple title"
 
 
+class TestResolveFacets:
+    def test_defaults_when_no_override(self):
+        pillars, descriptions, mechanics_vocab, entity_tags = _resolve_facets(None)
+        assert pillars == list(DEFAULT_PILLAR_NAMES)
+        assert descriptions is not None  # Should have focus descriptions
+        assert mechanics_vocab == DEFAULT_MECHANICS
+        assert entity_tags == {}
+
+    def test_uses_override_pillars_when_provided(self):
+        override = TaxonomyOverride(
+            pillars=("Theory & Concepts", "Applied Practice"),
+            mechanics=("rag", "persistent-memory"),
+            entity_tags={"model": ["deepseek"]},
+        )
+        pillars, descriptions, mechanics_vocab, entity_tags = _resolve_facets(override)
+        assert pillars == ["Theory & Concepts", "Applied Practice"]
+        assert descriptions is None  # Descriptions only for defaults
+        assert mechanics_vocab == ("rag", "persistent-memory")
+        assert entity_tags == {"model": ["deepseek"]}
+
+    def test_uses_override_mechanics_only(self):
+        override = TaxonomyOverride(mechanics=("custom-mechanic",))
+        pillars, descriptions, mechanics_vocab, entity_tags = _resolve_facets(override)
+        assert pillars == list(DEFAULT_PILLAR_NAMES)
+        assert descriptions is not None
+        assert mechanics_vocab == ("custom-mechanic",)
+        assert entity_tags == {}
+
+    def test_uses_override_entity_tags_only(self):
+        override = TaxonomyOverride(entity_tags={"tool": ["docker", "k8s"]})
+        pillars, descriptions, mechanics_vocab, entity_tags = _resolve_facets(override)
+        assert entity_tags == {"tool": ["docker", "k8s"]}
+
+
+class TestBuildSystemPrompt:
+    def test_contains_pillar_names(self):
+        pillars = ["Theory & Concepts", "Applied Practice"]
+        prompt = _build_system_prompt(pillars)
+        assert "Theory & Concepts" in prompt
+        assert "Applied Practice" in prompt
+
+    def test_includes_pillar_descriptions_when_provided(self):
+        pillars = ["Theory & Concepts", "Applied Practice"]
+        descriptions = {
+            "Theory & Concepts": "Foundational ideas",
+            "Applied Practice": "Building and implementing",
+        }
+        prompt = _build_system_prompt(pillars, descriptions)
+        assert "Foundational ideas" in prompt
+        assert "Building and implementing" in prompt
+
+    def test_includes_mechanics_section_when_non_empty(self):
+        pillars = ["Theory & Concepts"]
+        mechanics = ("rag", "persistent-memory", "vector-search")
+        prompt = _build_system_prompt(pillars, mechanics_vocab=mechanics)
+        assert "Established mechanics" in prompt
+        assert "rag" in prompt
+        assert "persistent-memory" in prompt
+        assert "vector-search" in prompt
+
+    def test_omits_mechanics_section_when_empty(self):
+        pillars = ["Theory & Concepts"]
+        prompt = _build_system_prompt(pillars, mechanics_vocab=())
+        assert "Established mechanics" not in prompt
+
+    def test_includes_deprecations_when_provided(self):
+        pillars = ["Theory & Concepts"]
+        deprecations = ["General", "Uncategorized"]
+        prompt = _build_system_prompt(pillars, deprecations=deprecations)
+        assert "Avoid these" in prompt
+        assert "General" in prompt
+        assert "Uncategorized" in prompt
+
+    def test_includes_guidance_when_provided(self):
+        pillars = ["Theory & Concepts"]
+        guidance = "Prefer Applied Practice for hands-on content."
+        prompt = _build_system_prompt(pillars, guidance=guidance)
+        assert "Domain guidance:" in prompt
+        assert guidance in prompt
+
+    def test_includes_entity_tags_section_when_non_empty(self):
+        pillars = ["Theory & Concepts"]
+        entity_tags = {"model": ["deepseek", "llama3"], "tool": ["docker"]}
+        prompt = _build_system_prompt(pillars, entity_tags=entity_tags)
+        assert "Known entity tags" in prompt
+        assert "model: deepseek, llama3" in prompt
+        assert "tool: docker" in prompt
+
+    def test_omits_entity_tags_section_when_empty(self):
+        pillars = ["Theory & Concepts"]
+        prompt = _build_system_prompt(pillars, entity_tags={})
+        assert "Known entity tags" not in prompt
+
+    def test_includes_response_format_example_with_entity_tags(self):
+        pillars = ["Applied Practice"]
+        entity_tags = {"model": ["deepseek"]}
+        prompt = _build_system_prompt(pillars, entity_tags=entity_tags)
+        assert '"tags"' in prompt
+
+    def test_includes_response_format_example_without_entity_tags(self):
+        pillars = ["Applied Practice"]
+        prompt = _build_system_prompt(pillars, entity_tags={})
+        assert '"pillar":' in prompt
+        assert '"mechanics":' in prompt
+        assert '"title":' in prompt
+
+    def test_contains_title_rules(self):
+        prompt = _build_system_prompt(["Theory & Concepts"])
+        assert "max 80 chars" in prompt
+        assert "YAML-safe" in prompt
+
+    def test_all_parts_together(self):
+        pillars = ["Theory & Concepts", "Applied Practice"]
+        descriptions = {"Theory & Concepts": "Foundational", "Applied Practice": "Practical"}
+        mechanics = ("rag", "memory")
+        deprecations = ["Old1", "Old2"]
+        guidance = "Custom guidance here."
+        entity_tags = {"tool": ["langchain"]}
+        prompt = _build_system_prompt(
+            pillars, descriptions, mechanics, deprecations, guidance, entity_tags
+        )
+        assert "Foundational" in prompt
+        assert "rag" in prompt
+        assert "Old1" in prompt
+        assert "Custom guidance here." in prompt
+        assert "langchain" in prompt
+
+
+class TestParseCategorizationResponse:
+    def test_parse_clean_json(self):
+        response = json.dumps([
+            {"tweet_id": "1", "pillar": "Applied Practice", "mechanics": ["rag"], "title": "Python Tips"},
+            {"tweet_id": "2", "pillar": "Theory & Concepts", "mechanics": ["vector-search"], "title": "LLM Basics"},
+        ])
+        result = parse_categorization_response(response)
+        assert len(result) == 2
+
+        pillar1, mechanics1, title1, tags1 = result["1"]
+        assert pillar1 == "Applied Practice"
+        assert mechanics1 == ("rag",)
+        assert title1 == "Python Tips"
+        assert tags1 == []
+
+        pillar2, mechanics2, title2, tags2 = result["2"]
+        assert pillar2 == "Theory & Concepts"
+        assert mechanics2 == ("vector-search",)
+        assert title2 == "LLM Basics"
+        assert tags2 == []
+
+    def test_parse_markdown_fenced_json(self):
+        response = '```json\n[{"tweet_id": "1", "pillar": "Applied Practice", "mechanics": ["rag", "memory"], "title": "Title"}]\n```'
+        result = parse_categorization_response(response)
+        assert len(result) == 1
+        pillar, mechanics, title, tags = result["1"]
+        assert pillar == "Applied Practice"
+        assert mechanics == ("rag", "memory")
+        assert title == "Title"
+        assert tags == []
+
+    def test_parse_with_backtick_only(self):
+        response = '```\n[{"tweet_id": "1", "pillar": "Theory & Concepts", "mechanics": ["search"], "title": "Search Basics"}]\n```'
+        result = parse_categorization_response(response)
+        pillar, mechanics, title, tags = result["1"]
+        assert pillar == "Theory & Concepts"
+        assert mechanics == ("search",)
+        assert title == "Search Basics"
+
+    def test_empty_response_returns_empty_dict(self):
+        result = parse_categorization_response("[]")
+        assert result == {}
+
+    def test_missing_title_returns_empty_string(self):
+        response = json.dumps([
+            {"tweet_id": "1", "pillar": "Applied Practice", "mechanics": ["rag"]},
+        ])
+        result = parse_categorization_response(response)
+        pillar, mechanics, title, tags = result["1"]
+        assert title == ""
+        assert tags == []
+
+    def test_missing_mechanics_returns_empty_tuple(self):
+        response = json.dumps([
+            {"tweet_id": "1", "pillar": "Applied Practice", "title": "Title"},
+        ])
+        result = parse_categorization_response(response)
+        pillar, mechanics, title, tags = result["1"]
+        assert mechanics == ()
+
+    def test_parse_with_tags(self):
+        response = json.dumps([
+            {
+                "tweet_id": "1",
+                "pillar": "Applied Practice",
+                "mechanics": ["rag"],
+                "title": "LangGraph Tips",
+                "tags": ["framework/langgraph", "model/deepseek"],
+            },
+        ])
+        result = parse_categorization_response(response)
+        pillar, mechanics, title, tags = result["1"]
+        assert pillar == "Applied Practice"
+        assert mechanics == ("rag",)
+        assert title == "LangGraph Tips"
+        assert tags == ["framework/langgraph", "model/deepseek"]
+
+    def test_returns_raw_pillar_and_mechanics(self):
+        """Pillar and mechanics are returned RAW — validation happens in categorize_tweets."""
+        response = json.dumps([
+            {
+                "tweet_id": "1",
+                "pillar": "INVALID PILLAR",
+                "mechanics": ["INVALID-MECHANIC"],
+                "title": "Title",
+            },
+        ])
+        result = parse_categorization_response(response)
+        pillar, mechanics, title, tags = result["1"]
+        assert pillar == "INVALID PILLAR"
+        assert mechanics == ("INVALID-MECHANIC",)
+
+
 class TestCategorizeTweets:
-    @patch("src.categorizer.anthropic")
-    def test_categorize_tweets(self, mock_anthropic_module):
+    @patch("src.categorizer.anthropic.Anthropic")
+    def test_categorize_tweets_end_to_end(self, mock_anthropic_class):
+        """End-to-end test with mocked Claude API."""
         mock_client = MagicMock()
-        mock_anthropic_module.Anthropic.return_value = mock_client
+        mock_anthropic_class.return_value = mock_client
         mock_response = MagicMock()
         mock_response.content = [MagicMock()]
         mock_response.content[0].text = json.dumps([
-            {"tweet_id": "1", "category": "AI Coding", "sub_category": "Coding Workflows", "title": "Python Tips and Tricks"},
-            {"tweet_id": "2", "category": "ML Research", "sub_category": "Applied ML", "title": "Latest LLM Advances"},
+            {
+                "tweet_id": "1",
+                "pillar": "Applied Practice",
+                "mechanics": ["rag", "memory"],
+                "title": "RAG Systems Guide",
+                "tags": ["framework/langgraph"],
+            },
+            {
+                "tweet_id": "2",
+                "pillar": "Theory & Concepts",
+                "mechanics": ["embeddings"],
+                "title": "Embedding Theory",
+            },
         ])
         mock_response.usage.input_tokens = 500
-        mock_response.usage.output_tokens = 100
+        mock_response.usage.output_tokens = 150
         mock_client.messages.create.return_value = mock_response
 
-        tweets = (_make_tweet("1", "Python tips"), _make_tweet("2", "New LLM"))
+        tweets = (_make_tweet("1", "RAG tips"), _make_tweet("2", "Embeddings"))
         result, usage = categorize_tweets(tweets, api_key="sk-test")
 
         assert len(result) == 2
-        assert result[0].category.slug == "ai-coding"
-        assert result[0].category.sub_category == "Coding Workflows"
-        assert result[0].title == "Python Tips and Tricks"
-        assert result[1].category.slug == "ml-research"
-        assert result[1].title == "Latest LLM Advances"
-        assert usage["input_tokens"] == 500
+        assert result[0].pillar == "Applied Practice"
+        assert result[0].mechanics == ("rag", "memory")
+        assert result[0].title == "RAG Systems Guide"
+        assert result[0].tags == ("framework/langgraph",)
 
-    @patch("src.categorizer.anthropic")
-    def test_override_file_merges_into_available_categories(self, mock_anthropic_module, valid_override_file):
-        """Test that override file taxonomy is merged into available categories."""
+        assert result[1].pillar == "Theory & Concepts"
+        assert result[1].mechanics == ("embeddings",)
+        assert result[1].title == "Embedding Theory"
+
+        assert usage["input_tokens"] == 500
+        assert usage["output_tokens"] == 150
+
+    @patch("src.categorizer.anthropic.Anthropic")
+    def test_pillar_validation_and_fallback(self, mock_anthropic_class):
+        """Test that invalid pillars trigger fallback with warning."""
         mock_client = MagicMock()
-        mock_anthropic_module.Anthropic.return_value = mock_client
+        mock_anthropic_class.return_value = mock_client
         mock_response = MagicMock()
         mock_response.content = [MagicMock()]
         mock_response.content[0].text = json.dumps([
-            {"tweet_id": "1", "category": "AI", "sub_category": "Coding", "title": "AI Coding"},
+            {
+                "tweet_id": "1",
+                "pillar": "INVALID PILLAR",
+                "mechanics": ["rag"],
+                "title": "Bad Pillar",
+            },
         ])
         mock_response.usage.input_tokens = 100
         mock_response.usage.output_tokens = 50
         mock_client.messages.create.return_value = mock_response
 
-        tweets = (_make_tweet("1", "AI coding"),)
-        result, _ = categorize_tweets(tweets, api_key="sk-test", override_file=valid_override_file)
+        tweets = (_make_tweet("1", "Test"),)
+        result, _ = categorize_tweets(tweets, api_key="sk-test")
 
-        # The test just verifies that override_file is accepted and passed through
-        assert len(result) == 1
+        # Fallback pillar is pillars[0] (first default pillar)
+        assert result[0].pillar == DEFAULT_PILLAR_NAMES[0]
 
-    @patch("src.categorizer.anthropic")
-    def test_deprecations_appear_in_prompt(self, mock_anthropic_module, valid_override_file):
-        """Test that deprecations from override file appear in the prompt."""
+    @patch("src.categorizer.anthropic.Anthropic")
+    def test_mechanics_normalization(self, mock_anthropic_class):
+        """Test that mechanics are normalized (slugified, deduped)."""
         mock_client = MagicMock()
-        mock_anthropic_module.Anthropic.return_value = mock_client
+        mock_anthropic_class.return_value = mock_client
         mock_response = MagicMock()
         mock_response.content = [MagicMock()]
         mock_response.content[0].text = json.dumps([
-            {"tweet_id": "1", "category": "AI", "sub_category": "Coding", "title": "Test"},
+            {
+                "tweet_id": "1",
+                "pillar": "Applied Practice",
+                "mechanics": ["RAG", "Persistent Memory", "rag"],  # duped, mixed case
+                "title": "Title",
+            },
         ])
         mock_response.usage.input_tokens = 100
         mock_response.usage.output_tokens = 50
+        mock_client.messages.create.return_value = mock_response
+
+        tweets = (_make_tweet("1", "Test"),)
+        result, _ = categorize_tweets(tweets, api_key="sk-test")
+
+        # Should normalize to lowercase-slug and dedupe
+        assert "rag" in result[0].mechanics
+        assert "persistent-memory" in result[0].mechanics
+        assert result[0].mechanics.count("rag") == 1  # No dupes
+
+    @patch("src.categorizer.anthropic.Anthropic")
+    def test_tags_normalization_and_filtering(self, mock_anthropic_class):
+        """Test that tags are normalized and filtered by prefix."""
+        mock_client = MagicMock()
+        mock_anthropic_class.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock()]
+        mock_response.content[0].text = json.dumps([
+            {
+                "tweet_id": "1",
+                "pillar": "Applied Practice",
+                "mechanics": ["rag"],
+                "title": "Title",
+                "tags": [
+                    "framework/LangGraph",  # Mixed case
+                    "model/Deepseek",  # Mixed case
+                    "invalid_prefix/something",  # Invalid prefix, should be dropped
+                    "framework/LangGraph",  # Duplicate
+                ],
+            },
+        ])
+        mock_response.usage.input_tokens = 100
+        mock_response.usage.output_tokens = 50
+        mock_client.messages.create.return_value = mock_response
+
+        tweets = (_make_tweet("1", "Test"),)
+        result, _ = categorize_tweets(tweets, api_key="sk-test")
+
+        # Invalid prefix dropped, normalized to lowercase
+        assert "framework/langgraph" in result[0].tags
+        assert "model/deepseek" in result[0].tags
+        assert len(result[0].tags) == 2  # No duplicates
+        # Invalid prefix should not appear
+        assert not any("invalid_prefix" in tag for tag in result[0].tags)
+
+    @patch("src.categorizer.anthropic.Anthropic")
+    def test_missing_tweet_in_response_uses_fallback(self, mock_anthropic_class):
+        """Test fallback when a tweet is missing from Claude's response."""
+        mock_client = MagicMock()
+        mock_anthropic_class.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock()]
+        mock_response.content[0].text = json.dumps([
+            {
+                "tweet_id": "1",
+                "pillar": "Applied Practice",
+                "mechanics": ["rag"],
+                "title": "Tweet 1",
+            },
+        ])
+        mock_response.usage.input_tokens = 100
+        mock_response.usage.output_tokens = 50
+        mock_client.messages.create.return_value = mock_response
+
+        tweets = (_make_tweet("1", "Test 1"), _make_tweet("2", "Test 2"))
+        result, _ = categorize_tweets(tweets, api_key="sk-test")
+
+        assert len(result) == 2
+        # Tweet 1 categorized normally
+        assert result[0].pillar == "Applied Practice"
+        assert result[0].title == "Tweet 1"
+
+        # Tweet 2 uses fallback
+        assert result[1].pillar == DEFAULT_PILLAR_NAMES[0]
+        assert result[1].mechanics == ()
+        assert result[1].tags == ()
+        assert result[1].title == "Test 2"  # Sanitized from display_text
+
+    @patch("src.categorizer.anthropic.Anthropic")
+    def test_empty_mechanics_list_triggers_warning(self, mock_anthropic_class):
+        """Test that empty mechanics list is logged as warning but tweet still categorized."""
+        mock_client = MagicMock()
+        mock_anthropic_class.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock()]
+        mock_response.content[0].text = json.dumps([
+            {
+                "tweet_id": "1",
+                "pillar": "Applied Practice",
+                "mechanics": [],
+                "title": "No Mechanics",
+            },
+        ])
+        mock_response.usage.input_tokens = 100
+        mock_response.usage.output_tokens = 50
+        mock_client.messages.create.return_value = mock_response
+
+        tweets = (_make_tweet("1", "Test"),)
+        result, _ = categorize_tweets(tweets, api_key="sk-test")
+
+        # Tweet still categorized, mechanics empty
+        assert result[0].pillar == "Applied Practice"
+        assert result[0].mechanics == ()
+        assert result[0].title == "No Mechanics"
+
+    @patch("src.categorizer.anthropic.Anthropic")
+    def test_fallback_title_when_empty(self, mock_anthropic_class):
+        """Test fallback title when Claude returns empty string."""
+        mock_client = MagicMock()
+        mock_anthropic_class.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock()]
+        mock_response.content[0].text = json.dumps([
+            {
+                "tweet_id": "1",
+                "pillar": "Applied Practice",
+                "mechanics": ["rag"],
+                "title": "",
+            },
+        ])
+        mock_response.usage.input_tokens = 100
+        mock_response.usage.output_tokens = 50
+        mock_client.messages.create.return_value = mock_response
+
+        tweets = (_make_tweet("1", "Original tweet text"),)
+        result, _ = categorize_tweets(tweets, api_key="sk-test")
+
+        assert result[0].title == "Original tweet text"
+
+    @patch("src.categorizer.anthropic.Anthropic")
+    def test_uses_override_file_when_provided(self, mock_anthropic_class, valid_override_file):
+        """Test that override file is loaded and facets resolved."""
+        mock_client = MagicMock()
+        mock_anthropic_class.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock()]
+        mock_response.content[0].text = json.dumps([
+            {
+                "tweet_id": "1",
+                "pillar": "Applied Practice",
+                "mechanics": ["rag"],
+                "title": "Title",
+                "tags": ["model/deepseek"],
+            },
+        ])
+        mock_response.usage.input_tokens = 100
+        mock_response.usage.output_tokens = 50
+        mock_client.messages.create.return_value = mock_response
+
+        tweets = (_make_tweet("1", "Test"),)
+        result, usage = categorize_tweets(tweets, api_key="sk-test", override_file=valid_override_file)
+
+        assert len(result) == 1
+        assert result[0].pillar == "Applied Practice"
+        # Override pillars [Theory & Concepts, Applied Practice] used, both available
+        assert result[0].pillar in ["Theory & Concepts", "Applied Practice"]
+
+    @patch("src.categorizer.anthropic.Anthropic")
+    def test_system_prompt_contains_override_data(self, mock_anthropic_class, valid_override_file):
+        """Test that system prompt includes override pillars, mechanics, deprecations, guidance."""
+        mock_client = MagicMock()
+        mock_anthropic_class.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock()]
+        mock_response.content[0].text = "[]"
+        mock_response.usage.input_tokens = 0
+        mock_response.usage.output_tokens = 0
         mock_client.messages.create.return_value = mock_response
 
         tweets = (_make_tweet("1", "Test"),)
         categorize_tweets(tweets, api_key="sk-test", override_file=valid_override_file)
 
-        # Verify that the prompt passed to Claude contains deprecation rules
-        call_args = mock_client.messages.create.call_args
-        system_prompt = call_args.kwargs["system"]
-        assert "Avoid these categories" in system_prompt
+        call_kwargs = mock_client.messages.create.call_args.kwargs
+        system_prompt = call_kwargs["system"]
+
+        # From valid_override_file: pillars [Theory & Concepts, Applied Practice]
+        assert "Theory & Concepts" in system_prompt
+        assert "Applied Practice" in system_prompt
+
+        # From valid_override_file: mechanics [rag, persistent-memory]
+        assert "rag" in system_prompt
+        assert "persistent-memory" in system_prompt
+
+        # From valid_override_file: deprecate [General, Uncategorized]
         assert "General" in system_prompt
+        assert "Uncategorized" in system_prompt
 
-    @patch("src.categorizer.anthropic")
-    def test_default_taxonomy_used_when_vault_and_override_empty(self, mock_anthropic_module, tmp_path):
-        """Test that DEFAULT_TAXONOMY is used when both vault and override are empty."""
+        # From valid_override_file: guidance text
+        assert "Prefer Applied Practice" in system_prompt
+
+    @patch("src.categorizer.anthropic.Anthropic")
+    def test_api_called_with_correct_model_and_tokens(self, mock_anthropic_class):
+        """Test that Claude API is called with correct model and max_tokens."""
         mock_client = MagicMock()
-        mock_anthropic_module.Anthropic.return_value = mock_client
-        mock_response = MagicMock()
-        mock_response.content = [MagicMock()]
-        mock_response.content[0].text = json.dumps([
-            {"tweet_id": "1", "category": "Technology", "sub_category": "Software Development", "title": "Test"},
-        ])
-        mock_response.usage.input_tokens = 100
-        mock_response.usage.output_tokens = 50
-        mock_client.messages.create.return_value = mock_response
-
-        # Empty directory (no vault) and no override
-        tweets = (_make_tweet("1", "Test"),)
-        categorize_tweets(tweets, api_key="sk-test", output_dir=tmp_path, override_file=None)
-
-        # Verify that the prompt contains DEFAULT_TAXONOMY categories
-        call_args = mock_client.messages.create.call_args
-        system_prompt = call_args.kwargs["system"]
-        assert "Technology" in system_prompt
-
-    @patch("src.categorizer.anthropic")
-    def test_missing_tweet_falls_back_to_general(self, mock_anthropic_module):
-        mock_client = MagicMock()
-        mock_anthropic_module.Anthropic.return_value = mock_client
-        mock_response = MagicMock()
-        mock_response.content = [MagicMock()]
-        mock_response.content[0].text = json.dumps([
-            {"tweet_id": "1", "category": "AI Coding", "sub_category": "Coding Workflows", "title": "Python Insights"},
-        ])
-        mock_response.usage.input_tokens = 100
-        mock_response.usage.output_tokens = 50
-        mock_client.messages.create.return_value = mock_response
-
-        tweets = (_make_tweet("1", "Python"), _make_tweet("2", "Omitted by Claude"))
-        result, _ = categorize_tweets(tweets, api_key="sk-test")
-
-        assert len(result) == 2
-        categorized_map = {ct.tweet.id: ct for ct in result}
-        assert categorized_map["1"].category.slug == "ai-coding"
-        assert categorized_map["1"].title == "Python Insights"
-        # tweet 2 was omitted from Claude response — code-level fallback applies
-        assert categorized_map["2"].category.slug == "general"
-        assert categorized_map["2"].category.sub_category == "Uncategorized"
-
-    @patch("src.categorizer.anthropic")
-    def test_fallback_title_when_claude_returns_empty(self, mock_anthropic_module):
-        mock_client = MagicMock()
-        mock_anthropic_module.Anthropic.return_value = mock_client
-        mock_response = MagicMock()
-        mock_response.content = [MagicMock()]
-        mock_response.content[0].text = json.dumps([
-            {"tweet_id": "1", "category": "AI Coding", "sub_category": "Coding Workflows", "title": ""},
-        ])
-        mock_response.usage.input_tokens = 50
-        mock_response.usage.output_tokens = 25
-        mock_client.messages.create.return_value = mock_response
-
-        tweets = (_make_tweet("1", "Python tips"),)
-        result, _ = categorize_tweets(tweets, api_key="sk-test")
-
-        assert result[0].title == "Python tips"  # sanitized display_text fallback
-
-    @patch("src.categorizer.anthropic")
-    def test_dynamic_prompt_used_no_general_fallback(self, mock_anthropic_module):
-        mock_client = MagicMock()
-        mock_anthropic_module.Anthropic.return_value = mock_client
+        mock_anthropic_class.return_value = mock_client
         mock_response = MagicMock()
         mock_response.content = [MagicMock()]
         mock_response.content[0].text = "[]"
@@ -464,17 +631,15 @@ class TestCategorizeTweets:
 
         categorize_tweets((), api_key="sk-test")
 
-        call_kwargs = mock_client.messages.create.call_args
-        system = call_kwargs.kwargs["system"]
-        assert "bookmark categorizer" in system
-        assert 'Do NOT use "General" or "Uncategorized"' in system
-        assert call_kwargs.kwargs["model"] == "claude-sonnet-4-6"
-        assert call_kwargs.kwargs["max_tokens"] == 8192
+        call_kwargs = mock_client.messages.create.call_args.kwargs
+        assert call_kwargs["model"] == "claude-sonnet-4-6"
+        assert call_kwargs["max_tokens"] == 8192
 
-    @patch("src.categorizer.anthropic")
-    def test_existing_taxonomy_injected_into_prompt(self, mock_anthropic_module, tmp_path):
+    @patch("src.categorizer.anthropic.Anthropic")
+    def test_api_key_passed_to_client(self, mock_anthropic_class):
+        """Test that API key is correctly passed to Anthropic client."""
         mock_client = MagicMock()
-        mock_anthropic_module.Anthropic.return_value = mock_client
+        mock_anthropic_class.return_value = mock_client
         mock_response = MagicMock()
         mock_response.content = [MagicMock()]
         mock_response.content[0].text = "[]"
@@ -482,12 +647,35 @@ class TestCategorizeTweets:
         mock_response.usage.output_tokens = 0
         mock_client.messages.create.return_value = mock_response
 
-        _write_bookmark(tmp_path / "a.md", title="A", username="u", category="AI Coding", sub="Coding Workflows", id="1")
+        categorize_tweets((), api_key="sk-secret-key")
 
-        categorize_tweets((), api_key="sk-test", output_dir=tmp_path)
+        mock_anthropic_class.assert_called_once_with(api_key="sk-secret-key")
 
-        call_kwargs = mock_client.messages.create.call_args
-        system = call_kwargs.kwargs["system"]
-        assert "AI Coding" in system
-        assert "Coding Workflows" in system
-        assert "Prefer the existing" in system
+    @patch("src.categorizer.anthropic.Anthropic")
+    def test_defaults_used_when_no_override(self, mock_anthropic_class):
+        """Test that default pillars/mechanics are used when no override file."""
+        mock_client = MagicMock()
+        mock_anthropic_class.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock()]
+        mock_response.content[0].text = json.dumps([
+            {
+                "tweet_id": "1",
+                "pillar": "Theory & Concepts",
+                "mechanics": [],
+                "title": "Title",
+            },
+        ])
+        mock_response.usage.input_tokens = 100
+        mock_response.usage.output_tokens = 50
+        mock_client.messages.create.return_value = mock_response
+
+        tweets = (_make_tweet("1", "Test"),)
+        result, _ = categorize_tweets(tweets, api_key="sk-test", override_file=None)
+
+        call_kwargs = mock_client.messages.create.call_args.kwargs
+        system_prompt = call_kwargs["system"]
+
+        # Default pillars should be present
+        for pillar_name in DEFAULT_PILLAR_NAMES:
+            assert pillar_name in system_prompt

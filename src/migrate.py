@@ -15,20 +15,22 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from src.categorizer import read_existing_taxonomy, _sanitize_title, _slugify
+from src.categorizer import _resolve_facets, _sanitize_title
 from src.config import resolve_taxonomy_file
-from src.markdown_writer import _escape_yaml_string, _slugify_title, _validate_frontmatter
+from src.markdown_writer import (
+    _slugify_title,
+    build_faceted_frontmatter,
+)
 from src.taxonomy import (
-    DEFAULT_TAXONOMY,
+    ENTITY_PREFIXES,
     build_entity_tags_section,
-    build_taxonomy_section,
-    load_override_file,
+    build_mechanics_section,
+    build_pillars_section,
+    group_entity_tags,
     load_taxonomy_override,
-    merge_taxonomies,
+    normalize_mechanics,
     normalize_tags,
-    parse_deprecations,
-    parse_entity_tags,
-    parse_override_guidance,
+    validate_pillar,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,9 +44,9 @@ _DEPRECATED_FIELDS = frozenset({
 })
 
 _ALLOWED_FIELDS = frozenset({
-    "title", "author", "category", "subCategory", "date",
+    "title", "author", "pillar", "mechanics", "entity_tags", "date",
     "read", "synthesized", "type", "tweet_url", "article_url",
-    "bookmark_removed", "bookmark_removed_at", "tags",
+    "bookmark_removed", "bookmark_removed_at",
 })
 
 
@@ -65,10 +67,9 @@ class MigrationResult:
     skipped: bool
     old_filename: str = ""
     new_filename: str = ""
-    old_category: str = ""
-    new_category: str = ""
-    old_sub_category: str = ""
-    new_sub_category: str = ""
+    old_pillar: str = ""
+    new_pillar: str = ""
+    mechanics: tuple[str, ...] = ()
     tags: tuple[str, ...] = ()
 
 
@@ -113,65 +114,72 @@ def parse_existing_bookmark(filepath: Path) -> ParsedBookmark | None:
         return None
 
 
+def _existing_mechanics(fm: dict) -> list[str]:
+    """Read an existing note's mechanics list (tolerant of missing/non-list)."""
+    value = fm.get("mechanics", [])
+    return [str(m) for m in value] if isinstance(value, list) else []
+
+
+def _existing_entity_tags(fm: dict) -> list[str]:
+    """Flatten an existing note's nested entity_tags dict back into prefix/entity tags."""
+    value = fm.get("entity_tags")
+    if not isinstance(value, dict):
+        return []
+    flat: list[str] = []
+    for prefix, entities in value.items():
+        if not isinstance(entities, list):
+            continue
+        for entity in entities:
+            flat.append(f"{prefix}/{entity}")
+    return flat
+
+
 def _build_migration_prompt(
-    taxonomy: dict[str, set[str]],
+    pillars: list[str],
+    pillar_descriptions: dict[str, str] | None = None,
+    mechanics_vocab: tuple[str, ...] = (),
     deprecations: list[str] | None = None,
     guidance: str | None = None,
     entity_tags: dict[str, list[str]] | None = None,
 ) -> str:
-    """System prompt for title generation and category validation.
-
-    Optionally includes deprecation rules, domain-specific guidance, and entity tags reference.
-    """
-    if taxonomy:
-        taxonomy_section = (
-            f"Existing categories and subcategories in the vault:\n"
-            f"{build_taxonomy_section(taxonomy)}\n\n"
-            "- Prefer the existing categories and subcategories.\n"
-            "- If the existing category/sub_category is valid, keep it as-is.\n"
-            "- If invalid, pick the closest match from the existing taxonomy.\n"
-            "- If truly no existing category fits, create a new one in Title Case (2-4 words).\n"
-            "- Do NOT use \"General\" or \"Uncategorized\" — every bookmark deserves a meaningful category."
-        )
-    else:
-        taxonomy_section = (
-            "No existing categories yet.\n\n"
-            "- Create meaningful categories in Title Case (e.g., \"Technology\", \"Health & Wellness\").\n"
-            "- Keep names concise (2-4 words).\n"
-            "- Do NOT use \"General\" or \"Uncategorized\" — every bookmark deserves a meaningful category."
-        )
-
+    """System prompt for re-titling and re-classifying existing bookmarks."""
     prompt_parts = [
-        "You are a bookmark migration assistant. Given a JSON array of existing bookmarks, "
-        "generate a concise, descriptive title for each and assign a category and sub_category.\n\n"
-        f"{taxonomy_section}"
+        "You are a bookmark migration assistant using a faceted classification model. "
+        "Given a JSON array of existing bookmarks, for each one generate a concise, "
+        "descriptive title and assign exactly one `pillar` and one or more `mechanics`.\n\n"
+        "Pillars (choose exactly one per bookmark):\n"
+        f"{build_pillars_section(pillars, pillar_descriptions)}\n\n"
+        "Rules:\n"
+        "- Use ONLY the pillars listed above; if the existing pillar is valid, keep it.\n"
+        "- Provide at least one mechanic (lowercase-dashed slug); prefer the established list.\n"
+        "- Never use a catch-all pillar."
     ]
 
+    mechanics_section = build_mechanics_section(mechanics_vocab)
+    if mechanics_section:
+        prompt_parts.append(f"\n\nEstablished mechanics (reference):\n{mechanics_section}")
+
     if deprecations:
-        deprecation_text = "\n\nAvoid these categories (do not assign or create them):\n"
+        deprecation_text = "\n\nAvoid these (do not assign or create them):\n"
         for dep in deprecations:
             deprecation_text += f"- {dep}\n"
         prompt_parts.append(deprecation_text.rstrip())
 
     if guidance:
-        prompt_parts.append(f"\nDomain guidance:\n{guidance}")
+        prompt_parts.append(f"\n\nDomain guidance:\n{guidance}")
 
-    # Entity tags section (only if non-empty)
     if entity_tags:
         entity_section = build_entity_tags_section(entity_tags)
         if entity_section:
-            prompt_parts.extend([
-                "\n\nKnown entity tags (reference):\n",
-                entity_section,
-            ])
+            prompt_parts.append(f"\n\nKnown entity tags (reference):\n{entity_section}")
         prompt_parts.append(
-            "\n\nIn addition to Domain (Category) and Discipline (Subcategory), "
-            "extract specific entities mentioned in the text. Format them as prefix/entity-name "
-            "(e.g., model/llama3, tool/docker). Use the provided entity_tags list as a primary reference, "
-            "but you may generate new valid tags using the established prefixes if a new entity is encountered."
+            "\n\nAlso extract entities as `prefix/entity-name` tags. Allowed prefixes "
+            f"(nouns only): {', '.join(ENTITY_PREFIXES)} (e.g., framework/langgraph, "
+            "model/llama3). Use the entity_tags list as a primary reference; you may add "
+            "new entities under the established prefixes."
         )
 
-    prompt_parts.extend([
+    prompt_parts.append(
         "\n\nTitle rules:\n"
         "- Generate a title (max 80 chars) for each bookmark.\n"
         "- For articles: prefer the article's actual title or topic.\n"
@@ -179,15 +187,17 @@ def _build_migration_prompt(
         "- Title must be YAML-safe: no colons, no quotes, no newlines, no brackets.\n\n"
         "Return ONLY a JSON array, no other text.\n\n"
         "Response format:\n"
-    ])
+    )
 
     if entity_tags:
         prompt_parts.append(
-            '[{"filename": "...", "title": "...", "category": "Technology", "sub_category": "Software Development", "tags": ["model/deepseek"]}, ...]'
+            '[{"filename": "...", "title": "...", "pillar": "Applied Practice", '
+            '"mechanics": ["rag"], "tags": ["framework/langgraph"]}, ...]'
         )
     else:
         prompt_parts.append(
-            '[{"filename": "...", "title": "...", "category": "Technology", "sub_category": "Software Development"}, ...]'
+            '[{"filename": "...", "title": "...", "pillar": "Applied Practice", '
+            '"mechanics": ["rag"]}, ...]'
         )
 
     return "".join(prompt_parts)
@@ -205,8 +215,8 @@ def _build_migration_payload(bookmarks: list[ParsedBookmark]) -> str:
         entries.append({
             "filename": bm.filepath.name,
             "title": str(fm.get("title", "")),
-            "category": str(fm.get("category", "")),
-            "subCategory": str(fm.get("subCategory", "")),
+            "pillar": str(fm.get("pillar", "")),
+            "mechanics": _existing_mechanics(fm),
             "type": str(bm_type),
             "body": body_text,
         })
@@ -214,7 +224,7 @@ def _build_migration_payload(bookmarks: list[ParsedBookmark]) -> str:
 
 
 def _parse_migration_response(text: str) -> dict[str, dict]:
-    """Parse Claude response into {filename: {title, category, sub_category, tags}}."""
+    """Parse Claude response into {filename: {title, pillar, mechanics, tags}}."""
     cleaned = text.strip()
     fenced = re.match(r"```(?:json)?\s*\n?(.*?)\n?```", cleaned, re.DOTALL)
     if fenced:
@@ -223,8 +233,8 @@ def _parse_migration_response(text: str) -> dict[str, dict]:
     return {
         entry["filename"]: {
             "title": entry.get("title", ""),
-            "category": entry.get("category", "General"),
-            "sub_category": entry.get("sub_category", "Uncategorized"),
+            "pillar": entry.get("pillar", ""),
+            "mechanics": entry.get("mechanics", []) or [],
             "tags": entry.get("tags", []),
         }
         for entry in entries
@@ -235,31 +245,23 @@ def generate_titles_batch(
     bookmarks: list[ParsedBookmark],
     api_key: str,
     batch_size: int = 150,
-    directory: Path | None = None,
     override_file: Path | None = None,
 ) -> dict[str, dict]:
-    """Send batches to Claude, return {filename: {title, category, sub_category, tags}}.
+    """Send batches to Claude, return {filename: {title, pillar, mechanics, tags}}.
 
     Default batch_size=150 sends all bookmarks in a single call.
     The Anthropic SDK handles rate-limit retries automatically.
     """
     client = anthropic.Anthropic(api_key=api_key)
-    vault_taxonomy = read_existing_taxonomy(directory) if directory is not None else {}
 
-    # Load override file once using TaxonomyOverride
     override_data = load_taxonomy_override(override_file)
-    override_taxonomy = override_data.taxonomy if override_data else None
-    available = merge_taxonomies(vault_taxonomy, override_taxonomy)
-
-    # Use DEFAULT_TAXONOMY if both vault and override are empty
-    if not available:
-        available = {cat: set(subs) for cat, subs in DEFAULT_TAXONOMY.items()}
-
+    pillars, descriptions, mechanics_vocab, entity_tags = _resolve_facets(override_data)
     deprecations = override_data.deprecations if override_data else None
     guidance = override_data.guidance if override_data else None
-    entity_tags = override_data.entity_tags if override_data else {}
 
-    system_prompt = _build_migration_prompt(available, deprecations, guidance, entity_tags)
+    system_prompt = _build_migration_prompt(
+        pillars, descriptions, mechanics_vocab, deprecations, guidance, entity_tags,
+    )
     all_results: dict[str, dict] = {}
 
     for i in range(0, len(bookmarks), batch_size):
@@ -294,54 +296,35 @@ def generate_titles_batch(
 def _build_migrated_frontmatter(
     parsed: dict,
     new_title: str,
-    category: str,
-    sub_category: str,
+    pillar: str,
+    mechanics: tuple[str, ...] = (),
     tags: tuple[str, ...] = (),
 ) -> str:
-    """Build frontmatter string using ONLY allowed fields."""
-    escaped_title = _escape_yaml_string(new_title)
+    """Build frontmatter string using ONLY allowed fields (faceted schema)."""
     author = str(parsed.get("author", "@unknown"))
     if not author.startswith("@"):
         author = f"@{author}"
 
-    date_val = parsed.get("date", "")
-    read_val = parsed.get("read", False)
-    synthesized_val = parsed.get("synthesized", False)
-    bm_type = str(parsed.get("type", "post"))
-    tweet_url = str(parsed.get("tweet_url", ""))
-    article_url = parsed.get("article_url")
-    bookmark_removed = parsed.get("bookmark_removed")
-    bookmark_removed_at = parsed.get("bookmark_removed_at")
+    tail_lines: list[str] = []
+    if parsed.get("bookmark_removed") is True:
+        tail_lines.append("bookmark_removed: true")
+    if parsed.get("bookmark_removed_at"):
+        tail_lines.append(f"bookmark_removed_at: {parsed.get('bookmark_removed_at')}")
 
-    lines = [
-        "---",
-        f'title: "{escaped_title}"',
-        f'author: "{_escape_yaml_string(author)}"',
-        f'category: "{_escape_yaml_string(category)}"',
-        f'subCategory: "{_escape_yaml_string(sub_category)}"',
-        f"date: {date_val}",
-        f"read: {'true' if read_val else 'false'}",
-        f"synthesized: {'true' if synthesized_val is True else 'false'}",
-        f'type: "{_escape_yaml_string(bm_type)}"',
-        f'tweet_url: "{_escape_yaml_string(tweet_url)}"',
-    ]
-
-    if article_url:
-        lines.append(f'article_url: "{_escape_yaml_string(str(article_url))}"')
-    if bookmark_removed is True:
-        lines.append("bookmark_removed: true")
-    if bookmark_removed_at:
-        lines.append(f"bookmark_removed_at: {bookmark_removed_at}")
-
-    # Add tags as YAML flow array if non-empty
-    if tags:
-        escaped_tags = [_escape_yaml_string(tag) for tag in tags]
-        tags_array = ", ".join(f'"{tag}"' for tag in escaped_tags)
-        lines.append(f"tags: [{tags_array}]")
-
-    lines.append("---")
-    frontmatter = "\n".join(lines) + "\n"
-    return _validate_frontmatter(frontmatter)
+    return build_faceted_frontmatter(
+        title=new_title,
+        author=author,
+        pillar=pillar,
+        mechanics=mechanics,
+        entity_tags=group_entity_tags(tags),
+        date=str(parsed.get("date", "")),
+        read=bool(parsed.get("read", False)),
+        synthesized=parsed.get("synthesized", False) is True,
+        bookmark_type=str(parsed.get("type", "post")),
+        tweet_url=str(parsed.get("tweet_url", "")),
+        article_url=parsed.get("article_url"),
+        tail_lines=tuple(tail_lines),
+    )
 
 
 def _replace_body_heading(body: str, new_title: str) -> str:
@@ -363,40 +346,50 @@ def _build_rename_filename(title: str, existing_names: set[str]) -> str:
         counter += 1
 
 
+def _resolve_pillar(title_data: dict, fm: dict, pillars: list[str], fallback: str) -> str:
+    """Pick the pillar: LLM's value if valid, else existing note's, else fallback."""
+    raw = str(title_data.get("pillar") or fm.get("pillar") or "")
+    return validate_pillar(raw, pillars, fallback)
+
+
+def _resolve_mechanics(title_data: dict, fm: dict) -> tuple[str, ...]:
+    """Pick mechanics: LLM's value if any, else the existing note's."""
+    raw = title_data.get("mechanics") or _existing_mechanics(fm)
+    return normalize_mechanics(raw)
+
+
+def _resolve_tags(title_data: dict, fm: dict, allowed_prefixes: set[str]) -> tuple[str, ...]:
+    """Pick entity tags: LLM's value if any, else the existing note's."""
+    raw = title_data.get("tags") or _existing_entity_tags(fm)
+    return normalize_tags(list(raw), allowed_prefixes)
+
+
 def migrate_single_file(
     parsed: ParsedBookmark,
     title_data: dict,
     existing_names: set[str] | None = None,
+    pillars: list[str] | None = None,
+    fallback_pillar: str = "",
     allowed_prefixes: set[str] | None = None,
 ) -> MigrationResult:
     """Rebuild frontmatter + body, write file in-place, rename to title slug."""
     fm = parsed.frontmatter
+    pillars = pillars or []
+    allowed_prefixes = allowed_prefixes if allowed_prefixes is not None else set(ENTITY_PREFIXES)
     old_title = str(fm.get("title", ""))
     old_filename = parsed.filepath.name
 
     new_title = title_data.get("title", "")
     if not new_title:
         new_title = _sanitize_title(old_title)
-    category = title_data.get("category", "General")
-    sub_category = title_data.get("sub_category", "Uncategorized")
+
+    pillar = _resolve_pillar(title_data, fm, pillars, fallback_pillar)
+    mechanics = _resolve_mechanics(title_data, fm)
+    tags = _resolve_tags(title_data, fm, allowed_prefixes)
 
     removed = tuple(k for k in fm if k in _DEPRECATED_FIELDS)
 
-    # Handle tags: if Claude returned tags, normalize them; otherwise preserve existing tags
-    raw_tags = title_data.get("tags", [])
-    if raw_tags:
-        tags = normalize_tags(raw_tags, allowed_prefixes)
-    else:
-        # Preserve existing tags from parsed frontmatter
-        existing_tags = fm.get("tags", [])
-        if isinstance(existing_tags, list):
-            tags = normalize_tags(existing_tags, allowed_prefixes)
-        else:
-            tags = ()
-
-    new_frontmatter = _build_migrated_frontmatter(
-        fm, new_title, category, sub_category, tags,
-    )
+    new_frontmatter = _build_migrated_frontmatter(fm, new_title, pillar, mechanics, tags)
 
     old_body = parsed.body
     new_body = _replace_body_heading(old_body, new_title)
@@ -404,7 +397,6 @@ def migrate_single_file(
 
     content = new_frontmatter + "\n" + new_body
 
-    # Determine new filename from title slug
     names = existing_names if existing_names is not None else set()
     new_filename = _build_rename_filename(new_title, names)
 
@@ -423,10 +415,9 @@ def migrate_single_file(
         skipped=False,
         old_filename=old_filename,
         new_filename=new_filename,
-        old_category=str(fm.get("category", "")),
-        new_category=str(category),
-        old_sub_category=str(fm.get("subCategory", "")),
-        new_sub_category=str(sub_category),
+        old_pillar=str(fm.get("pillar", "")),
+        new_pillar=pillar,
+        mechanics=mechanics,
         tags=tags,
     )
 
@@ -482,13 +473,14 @@ def migrate_directory(
         parsed_bookmarks,
         api_key,
         batch_size,
-        directory=directory,
         override_file=override_file,
     )
 
-    # Determine allowed prefixes for tag normalization during migration
-    entity_tags = parse_entity_tags(override_file)
-    allowed_prefixes = set(entity_tags.keys()) if entity_tags else None
+    # Resolve the allowed pillars + entity prefixes once for the whole batch.
+    override_data = load_taxonomy_override(override_file)
+    pillars, _descriptions, _mechanics_vocab, _entity_tags = _resolve_facets(override_data)
+    fallback_pillar = pillars[0] if pillars else ""
+    allowed_prefixes = set(ENTITY_PREFIXES)
 
     existing_names: set[str] = set()
 
@@ -497,8 +489,8 @@ def migrate_directory(
         if not title_data:
             title_data = {
                 "title": _sanitize_title(str(bm.frontmatter.get("title", ""))),
-                "category": str(bm.frontmatter.get("category", "General")),
-                "sub_category": str(bm.frontmatter.get("subCategory", "Uncategorized")),
+                "pillar": str(bm.frontmatter.get("pillar", "")),
+                "mechanics": _existing_mechanics(bm.frontmatter),
             }
 
         if dry_run:
@@ -508,10 +500,6 @@ def migrate_directory(
             has_notes_heading = bool(re.search(r"^## .+$", bm.body, re.MULTILINE))
             new_filename = _build_rename_filename(new_title, existing_names)
             existing_names.add(new_filename)
-            raw_tags = title_data.get("tags", [])
-            if not raw_tags:
-                existing = bm.frontmatter.get("tags", [])
-                raw_tags = existing if isinstance(existing, list) else []
             results.append(MigrationResult(
                 filepath=bm.filepath,
                 old_title=old_title,
@@ -521,14 +509,15 @@ def migrate_directory(
                 skipped=False,
                 old_filename=bm.filepath.name,
                 new_filename=new_filename,
-                old_category=str(bm.frontmatter.get("category", "")),
-                new_category=str(title_data.get("category", "")),
-                old_sub_category=str(bm.frontmatter.get("subCategory", "")),
-                new_sub_category=str(title_data.get("sub_category", "")),
-                tags=normalize_tags(raw_tags, allowed_prefixes),
+                old_pillar=str(bm.frontmatter.get("pillar", "")),
+                new_pillar=_resolve_pillar(title_data, bm.frontmatter, pillars, fallback_pillar),
+                mechanics=_resolve_mechanics(title_data, bm.frontmatter),
+                tags=_resolve_tags(title_data, bm.frontmatter, allowed_prefixes),
             ))
         else:
-            result = migrate_single_file(bm, title_data, existing_names, allowed_prefixes)
+            result = migrate_single_file(
+                bm, title_data, existing_names, pillars, fallback_pillar, allowed_prefixes,
+            )
             existing_names.add(result.new_filename)
             results.append(result)
 
@@ -571,7 +560,7 @@ def main() -> None:
         "--taxonomy-file",
         type=Path,
         default=None,
-        help="Optional taxonomy override file (YAML frontmatter with taxonomy/deprecate/guidance)",
+        help="Optional taxonomy override file (YAML frontmatter with pillars/mechanics/entity_tags/deprecate/guidance)",
     )
     parser.add_argument(
         "--verbose",
@@ -619,10 +608,9 @@ def main() -> None:
     heading_changes = sum(1 for r in results if r.heading_changed)
     total_removed = sum(len(r.fields_removed) for r in results)
     renamed = sum(1 for r in results if not r.skipped and r.old_filename != r.new_filename)
-    category_changes = sum(
+    pillar_changes = sum(
         1 for r in results
-        if not r.skipped
-        and (r.old_category, r.old_sub_category) != (r.new_category, r.new_sub_category)
+        if not r.skipped and r.old_pillar != r.new_pillar
     )
     tagged = sum(1 for r in results if not r.skipped and r.tags)
 
@@ -630,7 +618,7 @@ def main() -> None:
     print(f"Files processed: {len(results)}")
     print(f"Migrated:        {migrated}")
     print(f"Renamed:         {renamed}")
-    print(f"Category changes:{category_changes}")
+    print(f"Pillar changes:  {pillar_changes}")
     print(f"Notes tagged:    {tagged}")
     print(f"Skipped (errors):{skipped}")
     print(f"Headings updated:{heading_changes}")
@@ -644,10 +632,10 @@ def main() -> None:
                 label = "DRY" if args.dry_run else "OK"
                 title_change = f'"{r.old_title}" -> "{r.new_title}"'
                 print(f"  {label:4}  {r.old_filename} -> {r.new_filename}  {title_change}")
-                old_cat = f"{r.old_category} / {r.old_sub_category}"
-                new_cat = f"{r.new_category} / {r.new_sub_category}"
-                if old_cat != new_cat:
-                    print(f"        category: {old_cat}  ->  {new_cat}")
+                if r.old_pillar != r.new_pillar:
+                    print(f"        pillar: {r.old_pillar}  ->  {r.new_pillar}")
+                if r.mechanics:
+                    print(f"        mechanics: {', '.join(r.mechanics)}")
                 if r.tags:
                     print(f"        tags: {', '.join(r.tags)}")
                 if r.fields_removed:
