@@ -107,6 +107,44 @@ May introduce new dependency or network behavior. Keep failure handling explicit
 
 `high`
 
+## Issue: Backfill missing external link titles via defuddle
+
+### Summary
+
+After the X API fetch, run `defuddle` against any `ExternalLink.expanded_url` where `title is None` to populate the missing title field before note generation.
+
+### Why It Matters
+
+The X API frequently returns `None` for `ExternalLink.title`. Empty titles reduce note readability and give Claude less signal during categorization. Defuddle can extract a clean page title from the resolved URL at low cost — no full article body fetch required.
+
+### Scope
+
+- After `api_client.py` builds `ExternalLink` objects, identify those with `title is None`
+- Run `defuddle parse <expanded_url> -p title` for each missing title
+- Backfill the result into the `ExternalLink` before passing to the categorizer and note renderer
+- Fall back gracefully if the URL is unreachable or defuddle returns no title
+- Make the enrichment step opt-in via env var or CLI flag (avoids unexpected network calls in offline/test runs)
+
+### Acceptance Criteria
+
+- [ ] `ExternalLink.title` is populated for supported URLs that the API left blank
+- [ ] Failed or slow fetches do not block the main pipeline
+- [ ] The enrichment step is skippable without code changes
+- [ ] Tests cover the backfill path and the graceful fallback
+
+### Notes
+
+Complements `#3` (full article body extraction) but is intentionally lighter — title-only fetch. Can ship independently before `#3` is implemented. Requires `defuddle` to be installed and on PATH.
+
+### Labels
+
+- `enhancement`
+- `content`
+
+### Priority
+
+`medium`
+
 ## Issue: Unroll X threads into single notes
 
 ### Summary

@@ -57,6 +57,7 @@ Items are grouped into execution tiers in priority order. Each links to the corr
 
 ### Tier 3 — Content Quality
 - [ ] **[#3] Article extraction for external links** — fetch and clean article body via `defuddle` for non-X URLs
+- [ ] **[#16] External link title backfill** — after API fetch, run `defuddle` against any `ExternalLink.expanded_url` where `title is None` to populate missing titles; lighter than full article extraction and improves categorization quality and note readability
 - [ ] **[#4] Thread unrolling** — detect tweet threads and stitch related posts into a single coherent note
 - [ ] **[#5] Quote tweet expansion** — inline quoted tweet content into the parent note
 
