@@ -329,6 +329,14 @@ def _run_remove_synthesized_bookmarks(
 def _run_sync(config, run_id: str, started_at: str, t_start: float) -> None:
     """Fetch bookmarks, categorize, and write to Obsidian vault."""
     print(f"[{run_id}] Output directory: {config.output_dir}")
+    if not config.output_dir.exists():
+        print(
+            f"[{run_id}] WARNING: output directory does not exist yet.\n"
+            f"[{run_id}]   Deduplication will treat the vault as EMPTY, so every fetched\n"
+            f"[{run_id}]   bookmark will be categorized as new. This is expected on a first\n"
+            f"[{run_id}]   run, but if you expected existing notes here, KNOWLEDGE_BASE_DIR\n"
+            f"[{run_id}]   is likely misconfigured (check .env and .envrc.local)."
+        )
     print(f"[{run_id}] Fetching bookmarks for user {config.user_id}...")
     tweets = fetch_bookmarks(config)
 

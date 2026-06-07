@@ -108,6 +108,36 @@ class TestMain:
         output = capsys.readouterr().out
         assert "No bookmarks found" in output
 
+    @patch("src.main.fetch_bookmarks")
+    @patch("src.main.load_config")
+    def test_warns_when_output_dir_missing(self, mock_config, mock_fetch, tmp_path, capsys):
+        # A missing output dir makes dedup treat the vault as empty and re-categorize
+        # everything; the run must warn loudly and name the misconfigured env var so a
+        # wrong KNOWLEDGE_BASE_DIR can't masquerade as an empty vault (the 09_feeds bug).
+        missing_dir = tmp_path / "does-not-exist"
+        config = _make_config(missing_dir)
+        mock_config.return_value = config
+        mock_fetch.return_value = ()
+
+        main([])
+
+        output = capsys.readouterr().out
+        assert "output directory does not exist" in output
+        assert "KNOWLEDGE_BASE_DIR" in output
+
+    @patch("src.main.fetch_bookmarks")
+    @patch("src.main.load_config")
+    def test_no_warning_when_output_dir_exists(self, mock_config, mock_fetch, tmp_path, capsys):
+        # Guard against false alarms: a normal run against an existing vault must stay quiet.
+        config = _make_config(tmp_path)
+        mock_config.return_value = config
+        mock_fetch.return_value = ()
+
+        main([])
+
+        output = capsys.readouterr().out
+        assert "output directory does not exist" not in output
+
     @patch("src.main.write_bookmarks")
     @patch("src.main.categorize_tweets")
     @patch("src.main.read_existing_ids")
