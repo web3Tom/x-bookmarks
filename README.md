@@ -57,6 +57,7 @@ If `KNOWLEDGE_BASE_DIR` is unset, the tool defaults to `~/x-bookmarks-data`.
 The OAuth helper preserves this setting when it refreshes `.env`, so you do not need to re-export or re-add it after running `x-bookmarks-auth`.
 If a private shell setup already exports `KNOWLEDGE_DIR`, the CLI can use it as a fallback and `x-bookmarks-auth` will write it back as the canonical `KNOWLEDGE_BASE_DIR` entry in local `.env`.
 The CLI also reads simple `export KNOWLEDGE_BASE_DIR=...` entries from ignored `.envrc.local`, so the configured output directory still works when direnv has not populated the current shell.
+If the resolved output directory does not exist, the CLI prints a warning before fetching: deduplication treats a missing directory as an empty vault, so every bookmark would be categorized as new. This is expected on a first run, but otherwise signals a misconfigured `KNOWLEDGE_BASE_DIR`.
 
 #### Optional: customize the taxonomy
 

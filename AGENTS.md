@@ -206,6 +206,7 @@ Dedup happens in two passes, both **after** all fetching completes:
 - Each run fetches whatever the X API returns (typically 1-3 pages) and then deduplicates against disk.
 - There is **no early-stop optimization** that skips remaining pages when duplicates are found during fetching.
 - Because the API returns newest-first and often caps at ~300 bookmarks, the tool works best when run regularly so new bookmarks stay within the retrievable window.
+- Dedup is disk-relative: if `KNOWLEDGE_BASE_DIR` points at a nonexistent directory, `read_existing_ids` returns an empty set and every fetched bookmark looks novel. `_run_sync` warns loudly at startup when the output directory is missing (it does not abort, since a genuine first run creates the directory at write time).
 
 ## Validation Checklist
 

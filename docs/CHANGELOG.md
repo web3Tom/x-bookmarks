@@ -3,6 +3,14 @@
 Reverse-chronological log of session-level outcomes for this repository.
 Newest entry at the top. Long-form reasoning lives in the author's external spec system, not here.
 
+## 2026-06-07
+
+**Warn when the output directory does not exist**
+
+- Added a startup guard in `_run_sync`: when the resolved output directory is missing, the CLI prints a loud warning before fetching and names `KNOWLEDGE_BASE_DIR` as the likely cause. Dedup is disk-relative, so a missing directory makes `read_existing_ids` return an empty set and every fetched bookmark is treated as new — this guard surfaces a misconfigured path before any categorization spend.
+- Warns rather than aborts: a genuine first run has no directory yet (`write_bookmarks` creates it at write time), so aborting would break cold starts.
+- Tests: added `test_warns_when_output_dir_missing` and `test_no_warning_when_output_dir_exists`; full suite 429 passing at 89% coverage.
+
 ## 2026-06-03
 
 **Deterministic mechanics alias collapse**

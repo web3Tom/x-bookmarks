@@ -67,7 +67,7 @@ For output directory resolution, exported `KNOWLEDGE_BASE_DIR` takes precedence 
 
 Dedup runs after all fetching completes, not during pagination:
 
-1. `read_existing_ids` scans `*.md` files in the output directory and extracts tweet IDs from `tweet_url` frontmatter.
+1. `read_existing_ids` scans `*.md` files in the output directory and extracts tweet IDs from `tweet_url` frontmatter. A missing output directory yields an empty ID set; the CLI warns at startup so this does not silently re-categorize the whole vault when `KNOWLEDGE_BASE_DIR` is misconfigured.
 2. Fetched bookmarks are filtered against these IDs. Only novel tweets proceed to categorization.
 3. If all fetched bookmarks are already saved, the run exits immediately with `noop` status.
 4. A second defensive dedup check runs during file writing.
