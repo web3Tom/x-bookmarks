@@ -89,7 +89,7 @@ uv run x-bookmarks
 
 ## Known Limitations
 
-- **X API pagination bug:** The bookmarks endpoint often stops returning pages after approximately 300 bookmarks (~3 pages), even when you have more saved. This is a known X API issue. Run the tool regularly so new bookmarks stay within the retrievable window.
+- **X API pagination bug:** The bookmarks endpoint often stops returning pages after approximately 300 bookmarks (~3 pages), even when you have more saved. This is a known X API issue. Run the tool regularly so new bookmarks stay within the retrievable window. To recover history beyond this ceiling, see [Unofficial backfill](#unofficial-backfill-opt-in).
 - **No fetch-time dedup:** All available pages are fetched before deduplication runs. There is no early-stop optimization that skips remaining pages when duplicates are found.
 - **API tier requirement:** Bookmark access requires at least the X API Basic tier. The Free tier does not support bookmarks.
 
@@ -149,6 +149,59 @@ If deletion returns `403`, re-run `uv run x-bookmarks-auth`; older tokens do not
 
 Live deletion is capped at 50 bookmarks per run. Use `--max N` to process fewer.
 
+## Enriching Link Titles
+
+The X API often returns `None` for an external link's title, which makes notes less readable and gives Claude less signal during categorization. Opt in to backfill those titles:
+
+```bash
+uv run x-bookmarks --enrich-titles
+```
+
+Titles are fetched from [Jina Reader](https://r.jina.ai) with `GET https://r.jina.ai/{url}` — no API key, no account, no credential of any kind. Enrichment runs *after* deduplication, so only genuinely new bookmarks cost a request, and repeated URLs are fetched once per run. A failed or slow fetch leaves the title empty and never aborts the run.
+
+**Trade-off:** every enriched URL is disclosed to a third-party service. That is why this is opt-in rather than automatic. If your bookmarks include private or sensitive links, leave it off.
+
+## Unofficial Backfill (opt-in)
+
+> **This path violates the X Developer Agreement and can get your account flagged or locked.** It reads X's private GraphQL API using your session cookies rather than the sanctioned API. Read [`docs/feasibility-agent-reach.md`](docs/feasibility-agent-reach.md) before enabling it.
+
+The official bookmarks endpoint stops paginating at roughly 300 bookmarks per run, so older history is unreachable through it. This path exists to recover that history **once**, manually, and then be turned off again.
+
+It is deliberately narrow:
+
+- **Read-only.** Deletion always uses the official API. `--backfill-unofficial` is refused in combination with `--remove-synthesized-bookmarks`.
+- **Off by default,** behind two independent gates.
+- **No silent fallback** in either direction. A misconfigured backfill fails loudly rather than quietly becoming a normal run.
+
+### Setup
+
+```bash
+pipx install twitter-cli
+
+# Export from x.com via DevTools > Application > Cookies, or the Cookie-Editor extension
+export TWITTER_AUTH_TOKEN='...'
+export TWITTER_CT0='...'
+export X_BOOKMARKS_UNOFFICIAL=1
+
+uv run x-bookmarks --backfill-unofficial --backfill-max 5000
+```
+
+Both credentials are **required**, not optional. This is a safety mechanism: when they are absent, upstream `twitter-cli` scans your Chrome/Edge cookie jars to find them. Refusing to run without both is what prevents that unconsented scan.
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--backfill-unofficial` | Fetch via `twitter-cli` instead of the official API. Read-only. |
+| `--backfill-max N` | Maximum bookmarks to request (default 5000). Requires `--backfill-unofficial`. |
+| `--enrich-titles` | Backfill missing external-link titles via Jina Reader. Usable on either path. |
+
+Pairing `--enrich-titles` with a backfill is worthwhile: `twitter-cli` emits bare URL strings with no title metadata, so on this path *every* external link title starts empty.
+
+### Recommended usage
+
+Run the backfill once, then unset `X_BOOKMARKS_UNOFFICIAL` and return to the OAuth path for routine syncs. A single interactive run presents a far smaller detection surface than a recurring automated job. Do not schedule this.
+
 ## Development
 
 Run the test suite with coverage:
@@ -181,3 +234,5 @@ Candidate-mechanism assessments backing roadmap item `#17` (zero-cost bookmark r
 - The repository does not currently encrypt local token storage.
 - `KNOWLEDGE_BASE_DIR` may contain a machine-specific path. Keep it in `.env` or `.envrc.local`, not in committed docs or code.
 - If `ANTHROPIC_API_KEY` is unset (or blank) after loading `.env`, the loader falls back to fetching it from the user's [`pass`](https://www.passwordstore.org/) store at `ai/anthropic/api-key`. This lets you keep the key out of `.env` entirely and still run the tool through a `direnv`/`pass` workflow. The fallback is silently skipped if `pass` is not installed.
+- **Agent session transcripts:** AI coding agents may log tool calls, including environment and HTTP headers, into session transcripts. If you run this tool inside an agent session, credentials can end up in those logs. Prefer exported environment variables over inline command arguments, and review your agent's log settings.
+- **`TWITTER_AUTH_TOKEN` is not a scoped token.** Unlike the OAuth tokens used on the default path, which are scoped to `bookmark.*` and individually revocable, the `auth_token` cookie is roughly full account access. Never commit it, never pass it as a command-line argument, and revoke it by logging out of all X sessions if you suspect exposure. The unofficial backfill passes it only through the child process environment, never argv.

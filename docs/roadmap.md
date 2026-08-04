@@ -41,6 +41,18 @@
 - [x] **Lateral tagging in categorization** — Claude extracts tags alongside Category/Subcategory in both `categorizer.py` and `migrate.py`
 - [x] **Migration backward compatibility** — existing tags preserved in migrated files when Claude returns no new tags
 
+### v1.6 — Hybrid Free Retrieval
+- [x] **[#18] Opt-in unofficial backfill** — `src/unofficial_client.py` adapts `twitter bookmarks --json` into the existing `Tweet` model behind two independent gates (`X_BOOKMARKS_UNOFFICIAL=1` **and** explicit `TWITTER_AUTH_TOKEN`/`TWITTER_CT0`). Read-only, `--backfill-unofficial` / `--backfill-max`, refused in combination with `--remove-synthesized-bookmarks`, credentials passed via child env never argv, fails loudly with no silent fallback in either direction
+- [x] **[#16] External link title backfill** — implemented in `src/enrichment.py` via **Jina Reader** (`https://r.jina.ai/{url}`) rather than the originally-planned `defuddle`. Opt-in with `--enrich-titles`, applied after deduplication so only new bookmarks are enriched, results cached per URL, failures degrade to `title: None` without aborting the run
+
+#### Why Jina Reader instead of `defuddle` for `#16`
+
+`#16` was originally scoped around `defuddle`, which requires the binary on `PATH`. Jina Reader is a keyless unauthenticated `GET` with no local dependency, discovered while assessing Agent-Reach (see [`feasibility-agent-reach.md`](feasibility-agent-reach.md) §5.1). It removes the install precondition entirely and carries no credential.
+
+The trade-off, recorded rather than averaged away: Jina discloses every enriched URL to a third party, whereas `defuddle` fetches locally. That is why enrichment is opt-in rather than automatic. `#3` (full article body extraction) remains open and should reuse whichever mechanism `#16` settles on in practice.
+
+This pairing is not incidental. The unofficial path emits bare URL strings with no title metadata at all, so **every** `ExternalLink.title` starts as `None` there, versus only some on the official path. `#18` makes `#16` substantially more valuable.
+
 ## Planned
 
 Items are grouped into execution tiers in priority order. Each links to the corresponding GitHub issue in [`docs/github-issues.md`](github-issues.md). Priority reflects safety-first sequencing: credential hardening and dev-safety scaffolding precede content features.
@@ -57,12 +69,11 @@ Items are grouped into execution tiers in priority order. Each links to the corr
 - [ ] **[#17] Zero-cost bookmark retrieval path** — remove the paid X API tier from the critical path and lift the per-run fetch ceiling, **without** making the user's personal account the credential of record. Goal-stated, means-open: evaluate candidate mechanisms on cost, ToS posture, and credential blast radius before committing to one. See [`feasibility-graphql-vs-x-api.md`](feasibility-graphql-vs-x-api.md), [`feasibility-agent-reach.md`](feasibility-agent-reach.md), and [`feasibility-x-research-skill.md`](feasibility-x-research-skill.md)
 
 ### Tier 3 — Content Quality
-- [ ] **[#3] Article extraction for external links** — fetch and clean article body via `defuddle` for non-X URLs
-- [ ] **[#16] External link title backfill** — after API fetch, run `defuddle` against any `ExternalLink.expanded_url` where `title is None` to populate missing titles; lighter than full article extraction and improves categorization quality and note readability
+- [ ] **[#3] Article extraction for external links** — fetch and clean article body for non-X URLs. Originally scoped to `defuddle`; reconsider against Jina Reader, which `#16` now uses in production (see v1.6)
 - [ ] **[#4] Thread unrolling** — detect tweet threads and stitch related posts into a single coherent note
 - [ ] **[#5] Quote tweet expansion** — inline quoted tweet content into the parent note
 
-> **Alternate mechanism for `#3` / `#16`:** Agent-Reach reads arbitrary URLs as Markdown via `GET https://r.jina.ai/{url}` with **no API key, cookie, or account** — see [`feasibility-agent-reach.md`](feasibility-agent-reach.md) §5.1. This would remove `#16`'s "requires `defuddle` on `PATH`" precondition and carries none of `#17`'s credential risk. Trade-offs to verify before adopting: it routes every bookmarked URL through a third party (privacy), and its anonymous rate limits are unstated.
+> `#16` moved to **Completed (v1.6)**, implemented via Jina Reader rather than `defuddle`. See the v1.6 section for the mechanism rationale and its trade-off.
 
 ### Tier 4 — UX & Automation
 - [ ] **[#11] Verbose and quiet CLI modes** — control output verbosity for debugging vs automation contexts
@@ -99,7 +110,9 @@ Items are grouped into execution tiers in priority order. Each links to the corr
 | 2026-08-03 | [`public-clis/twitter-cli`](feasibility-agent-reach.md) (Agent-Reach's delegate) | **Rejected on risk, not capability** | **Clears the capability bar outright** — free, Apache-2.0, Python, reads own bookmarks + folders + create/delete, cursor-paginated, dynamic queryIds. Declined because it ships an explicit anti-detection stack: TLS fingerprint impersonation, `x-client-transaction-id` forgery, timing jitter documented as evading pattern detection, and full browser-cookie forwarding |
 | 2026-08-03 | [`rohunvora/x-research-skill`](feasibility-x-research-skill.md) | Rejected | Wrapper over the **paid** official API (~$0.50/search) — wrong cost direction; bookmarks command was added and reverted 116s later, absent at `HEAD` |
 
-**Status as of 2026-08-03: blocked on a risk decision, not on further research.**
+**Status as of 2026-08-03: partially addressed by `#18` (v1.6); the full-replacement question remains blocked on a risk decision, not on further research.**
+
+`#18` implements the hybrid split rather than resolving `#17` outright. It takes the **fetch-ceiling** half — a one-time manual backfill past the ~300/run limit — while leaving routine syncs and all deletion on the sanctioned OAuth path. `#17` stays open for the **recurring-cost** half, which is the part that would require running the unsanctioned mechanism continuously against the real account. That remains a user decision about acceptable risk, and the recommendation against it stands.
 
 `#17` was deliberately written goal-scoped so a safer third mechanism could be adopted if one existed. The 2026-08-03 sweep establishes that none does:
 

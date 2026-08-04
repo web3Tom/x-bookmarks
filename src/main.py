@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 import uuid
@@ -17,6 +18,7 @@ from src.api_client import (
 )
 from src.categorizer import categorize_tweets
 from src.config import load_config
+from src.enrichment import backfill_titles
 from src.markdown_writer import read_existing_ids, write_bookmarks
 from src.removal import (
     backfill_synthesized_false,
@@ -24,8 +26,17 @@ from src.removal import (
     remove_candidates,
     scan_synthesized_bookmark_notes,
 )
+from src.unofficial_client import (
+    AUTH_TOKEN_ENV,
+    CT0_ENV,
+    ENABLE_ENV,
+    UnofficialDisabledError,
+    UnofficialFetchError,
+    fetch_bookmarks_unofficial,
+)
 
 _HISTORY_FILENAME = ".x-bookmarks-history.jsonl"
+_DEFAULT_BACKFILL_MAX = 5000
 
 
 def _build_run_record(
@@ -106,11 +117,55 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         dest="max_removals",
         help=f"Maximum live removals to attempt, capped at {max_live_removals()}.",
     )
+    parser.add_argument(
+        "--backfill-unofficial",
+        action="store_true",
+        help=(
+            "Fetch bookmarks via twitter-cli instead of the official API. "
+            f"Read-only, and requires {ENABLE_ENV}=1 plus explicit "
+            f"{AUTH_TOKEN_ENV}/{CT0_ENV}. Uses X's private API with session "
+            "cookies: violates the X Developer Agreement and can get your "
+            "account flagged. Intended for a one-time historical backfill."
+        ),
+    )
+    parser.add_argument(
+        "--backfill-max",
+        type=int,
+        help=(
+            "Maximum bookmarks to request during an unofficial backfill "
+            f"(default {_DEFAULT_BACKFILL_MAX}). Requires --backfill-unofficial."
+        ),
+    )
+    parser.add_argument(
+        "--enrich-titles",
+        action="store_true",
+        help=(
+            "Backfill missing external-link titles via Jina Reader "
+            "(keyless, no credentials). Discloses bookmarked URLs to a "
+            "third-party service."
+        ),
+    )
     args = parser.parse_args(argv)
     if (args.dry_run or args.confirm or args.max_removals is not None) and not args.remove_synthesized_bookmarks:
         parser.error("--dry-run, --confirm, and --max require --remove-synthesized-bookmarks")
     if args.max_removals is not None and args.max_removals < 1:
         parser.error("--max must be greater than zero")
+    # Deletion stays on the official API permanently: the documented DELETE has
+    # idempotency and error semantics the private GraphQL surface does not.
+    if args.backfill_unofficial and args.remove_synthesized_bookmarks:
+        parser.error(
+            "--backfill-unofficial cannot be combined with "
+            "--remove-synthesized-bookmarks; removal always uses the official API"
+        )
+    if args.enrich_titles and args.remove_synthesized_bookmarks:
+        parser.error(
+            "--enrich-titles cannot be combined with "
+            "--remove-synthesized-bookmarks; removal mode never fetches or categorizes"
+        )
+    if args.backfill_max is not None and not args.backfill_unofficial:
+        parser.error("--backfill-max requires --backfill-unofficial")
+    if args.backfill_max is not None and args.backfill_max < 1:
+        parser.error("--backfill-max must be greater than zero")
     return args
 
 
@@ -326,7 +381,50 @@ def _run_remove_synthesized_bookmarks(
     return 1 if stats.failed else 0
 
 
-def _run_sync(config, run_id: str, started_at: str, t_start: float) -> None:
+def _fetch_tweets(
+    config,
+    run_id: str,
+    *,
+    backfill_unofficial: bool,
+    backfill_max: int | None,
+):
+    """Fetch bookmarks from the official API, or the opt-in unofficial path.
+
+    The official path stays the default. The unofficial path is only reachable
+    through an explicit CLI flag, and fails loudly rather than falling back, so
+    a misconfigured backfill can never silently become a normal run.
+    """
+    if not backfill_unofficial:
+        print(f"[{run_id}] Fetching bookmarks for user {config.user_id}...")
+        return fetch_bookmarks(config)
+
+    limit = backfill_max or _DEFAULT_BACKFILL_MAX
+    print(
+        f"[{run_id}] UNOFFICIAL BACKFILL via twitter-cli (max {limit}).\n"
+        f"[{run_id}]   Uses X's private API with session cookies. This violates\n"
+        f"[{run_id}]   the X Developer Agreement and can get your account flagged.\n"
+        f"[{run_id}]   Read-only: no bookmarks will be deleted on this path."
+    )
+    try:
+        return fetch_bookmarks_unofficial(max_count=limit, env=os.environ)
+    except UnofficialDisabledError as exc:
+        print(f"[{run_id}] Refusing to run: {exc}")
+        sys.exit(1)
+    except UnofficialFetchError as exc:
+        print(f"[{run_id}] Unofficial fetch failed: {exc}")
+        sys.exit(1)
+
+
+def _run_sync(
+    config,
+    run_id: str,
+    started_at: str,
+    t_start: float,
+    *,
+    backfill_unofficial: bool = False,
+    backfill_max: int | None = None,
+    enrich_titles: bool = False,
+) -> None:
     """Fetch bookmarks, categorize, and write to Obsidian vault."""
     print(f"[{run_id}] Output directory: {config.output_dir}")
     if not config.output_dir.exists():
@@ -337,8 +435,12 @@ def _run_sync(config, run_id: str, started_at: str, t_start: float) -> None:
             f"[{run_id}]   run, but if you expected existing notes here, KNOWLEDGE_BASE_DIR\n"
             f"[{run_id}]   is likely misconfigured (check .env and .envrc.local)."
         )
-    print(f"[{run_id}] Fetching bookmarks for user {config.user_id}...")
-    tweets = fetch_bookmarks(config)
+    tweets = _fetch_tweets(
+        config,
+        run_id,
+        backfill_unofficial=backfill_unofficial,
+        backfill_max=backfill_max,
+    )
 
     if not tweets:
         duration_ms = int((time.monotonic() - t_start) * 1000)
@@ -371,6 +473,21 @@ def _run_sync(config, run_id: str, started_at: str, t_start: float) -> None:
         history_path = _append_history(config.output_dir, record)
         print(f"[{run_id}] History written to {history_path}")
         return
+
+    if enrich_titles:
+        missing = sum(
+            1 for t in novel for link in t.external_links if not link.title
+        )
+        if missing:
+            print(
+                f"[{run_id}] Enriching {missing} external link title(s) "
+                "via Jina Reader..."
+            )
+            novel = backfill_titles(novel)
+            filled = sum(
+                1 for t in novel for link in t.external_links if link.title
+            )
+            print(f"[{run_id}] {filled} link title(s) now populated.")
 
     article_count = sum(1 for t in novel if t.article_url)
     if article_count:
@@ -454,7 +571,15 @@ def main(argv: Sequence[str] | None = None) -> None:
             sys.exit(code)
         return
 
-    _run_sync(config, run_id, started_at, t_start)
+    _run_sync(
+        config,
+        run_id,
+        started_at,
+        t_start,
+        backfill_unofficial=args.backfill_unofficial,
+        backfill_max=args.backfill_max,
+        enrich_titles=args.enrich_titles,
+    )
 
 
 if __name__ == "__main__":

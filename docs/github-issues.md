@@ -608,3 +608,55 @@ Prior analysis in `docs/feasibility-graphql-vs-x-api.md` assessed cookie/GraphQL
 ### Priority
 
 `high`
+
+## Issue: Opt-in unofficial backfill via twitter-cli (hybrid)
+
+### Summary
+
+Add a read-only, double-gated backfill path that fetches bookmarks through `public-clis/twitter-cli` instead of the official X API, to recover bookmark history beyond the official endpoint's observed ~300-per-run ceiling. The official OAuth path remains the default for all routine syncs, and deletion remains on the official API permanently.
+
+### Why It Matters
+
+`#17` established that a free, fully capable mechanism exists but fails the account-risk bar. Rather than adopt it wholesale or reject it outright, this splits the problem by job:
+
+- The **fetch ceiling** is a one-time problem. A single manual backfill recovers the history that the official endpoint will not paginate to.
+- The **API cost** is recurring but small, since incremental syncs fetch few new items and stay comfortably inside the official tier.
+
+A single interactive backfill presents a far smaller detection surface than a recurring automated job, which is the traffic pattern anti-bot systems are built to identify. This captures most of the value of `#17` at a fraction of the exposure.
+
+### Scope
+
+- `src/unofficial_client.py`: adapt `twitter bookmarks --json` output into the existing `Tweet` model
+- Two independent gates: `X_BOOKMARKS_UNOFFICIAL=1` **and** explicitly supplied `TWITTER_AUTH_TOKEN` / `TWITTER_CT0`
+- `--backfill-unofficial` and `--backfill-max N` CLI flags; refuse to combine with `--remove-synthesized-bookmarks`
+- Credentials passed via child process environment only, never argv
+- Fail loudly on any error; never fall back to or from the official path silently
+
+### Acceptance Criteria
+
+- [x] Default runs are byte-for-byte unchanged; the path is unreachable without the flag
+- [x] Invocation is refused when either credential is absent, before any subprocess spawns
+- [x] `--backfill-unofficial` cannot be combined with `--remove-synthesized-bookmarks`
+- [x] Credentials never appear in argv
+- [x] Adapter maps metrics to official API key names, synthesizes unique media keys, and emits timezone-aware timestamps
+- [x] A malformed entry is skipped rather than aborting the whole backfill
+- [x] Missing `twitter-cli` reports the install command
+- [x] Tests cover both gates, the adapter, and every error path
+
+### Notes
+
+The credential requirement is a safety mechanism, not ergonomics: when `TWITTER_AUTH_TOKEN`/`TWITTER_CT0` are absent, upstream `twitter-cli` scans Chrome/Edge cookie jars to find them. Refusing to invoke it without both variables is what prevents that unconsented scan. This mirrors the "Cookie-Editor-only policy" documented in `docs/feasibility-agent-reach.md` §5.2.
+
+This path violates the X Developer Agreement and can get the account flagged. It is documented as such in `--help`, in the runtime banner, and in `README.md`. It is intended to be run once, manually, and then left off.
+
+Depends on `#14` for credential storage hardening if this ever becomes routine rather than one-time.
+
+### Labels
+
+- `enhancement`
+- `reliability`
+- `opt-in`
+
+### Priority
+
+`medium`
