@@ -95,26 +95,46 @@ class TestConfig:
         assert config.output_dir.is_absolute()
         assert str(config.output_dir).endswith("my-kb")
 
-    def test_missing_client_id_raises(self, tmp_path, monkeypatch):
+    def test_loads_without_any_oauth_credentials(self, tmp_path, monkeypatch):
+        """The headline property of the twitter-cli default: the tool runs with
+        no X developer account at all. Requiring OAuth here would make the free
+        path unreachable for anyone who never registered an X app.
+        """
         env_file = tmp_path / ".env"
         env_file.write_text("")
-        monkeypatch.setenv("ACCESS_TOKEN", "t")
-        monkeypatch.setenv("REFRESH_TOKEN", "r")
-        monkeypatch.setenv("USER_ID", "u")
         monkeypatch.setenv("ANTHROPIC_API_KEY", "a")
-        monkeypatch.delenv("CLIENT_ID", raising=False)
-        with pytest.raises(ValueError, match="CLIENT_ID"):
-            load_config(env_path=env_file)
+        for name in ("CLIENT_ID", "ACCESS_TOKEN", "REFRESH_TOKEN", "USER_ID"):
+            monkeypatch.delenv(name, raising=False)
 
-    def test_missing_access_token_raises(self, tmp_path, monkeypatch):
+        config = load_config(env_path=env_file)
+
+        assert config.has_official_credentials is False
+        assert config.client_id == ""
+        assert config.access_token == ""
+
+    def test_partial_oauth_is_reported_unusable(self, tmp_path, monkeypatch):
+        """Half-configured OAuth must be caught before --official runs, not
+        surface as a 401 midway through a paid fetch."""
         env_file = tmp_path / ".env"
         env_file.write_text("")
-        monkeypatch.setenv("CLIENT_ID", "c")
-        monkeypatch.setenv("REFRESH_TOKEN", "r")
-        monkeypatch.setenv("USER_ID", "u")
         monkeypatch.setenv("ANTHROPIC_API_KEY", "a")
-        monkeypatch.delenv("ACCESS_TOKEN", raising=False)
-        with pytest.raises(ValueError, match="ACCESS_TOKEN"):
+        monkeypatch.setenv("CLIENT_ID", "c")
+        monkeypatch.setenv("ACCESS_TOKEN", "t")
+        for name in ("REFRESH_TOKEN", "USER_ID"):
+            monkeypatch.delenv(name, raising=False)
+
+        assert load_config(env_path=env_file).has_official_credentials is False
+
+    def test_missing_anthropic_key_still_raises(self, tmp_path, monkeypatch):
+        """Categorization is not optional on either path, so this key remains
+        the one hard requirement."""
+        env_file = tmp_path / ".env"
+        env_file.write_text("")
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setattr(
+            "src.config._resolve_anthropic_key_from_pass", lambda: ""
+        )
+        with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
             load_config(env_path=env_file)
 
     def test_missing_anthropic_key_raises(self, tmp_path, monkeypatch):

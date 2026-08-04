@@ -42,6 +42,9 @@
 - [x] **Migration backward compatibility** — existing tags preserved in migrated files when Claude returns no new tags
 
 ### v1.6 — Hybrid Free Retrieval
+
+> **Superseded by v1.7.** The gates and flags described below (`X_BOOKMARKS_UNOFFICIAL`, `--backfill-unofficial`, `--backfill-max`) no longer exist; `twitter-cli` became the default rather than an opt-in backfill. Retained for the decision trail. `#16` is unaffected and still current.
+
 - [x] **[#18] Opt-in unofficial backfill** — `src/unofficial_client.py` adapts `twitter bookmarks --json` into the existing `Tweet` model behind two independent gates (`X_BOOKMARKS_UNOFFICIAL=1` **and** explicit `TWITTER_AUTH_TOKEN`/`TWITTER_CT0`). Read-only, `--backfill-unofficial` / `--backfill-max`, refused in combination with `--remove-synthesized-bookmarks`, credentials passed via child env never argv, fails loudly with no silent fallback in either direction
 - [x] **[#16] External link title backfill** — implemented in `src/enrichment.py` via **Jina Reader** (`https://r.jina.ai/{url}`) rather than the originally-planned `defuddle`. Opt-in with `--enrich-titles`, applied after deduplication so only new bookmarks are enriched, results cached per URL, failures degrade to `title: None` without aborting the run
 
@@ -52,6 +55,27 @@
 The trade-off, recorded rather than averaged away: Jina discloses every enriched URL to a third party, whereas `defuddle` fetches locally. That is why enrichment is opt-in rather than automatic. `#3` (full article body extraction) remains open and should reuse whichever mechanism `#16` settles on in practice.
 
 This pairing is not incidental. The unofficial path emits bare URL strings with no title metadata at all, so **every** `ExternalLink.title` starts as `None` there, versus only some on the official path. `#18` makes `#16` substantially more valuable.
+
+### v1.7 — Full Free Replacement
+- [x] **[#19] `twitter-cli` as the default mechanism** — reads **and** removals now go through `twitter-cli` by default. `--official` selects the OAuth path for both. The X developer platform is no longer required to run the tool at all
+- [x] **Optional OAuth configuration** — `CLIENT_ID`/`ACCESS_TOKEN`/`REFRESH_TOKEN`/`USER_ID` dropped from `config._REQUIRED`; only `ANTHROPIC_API_KEY` remains mandatory. `Config.has_official_credentials` gates `--official` and fails at startup rather than mid-run
+- [x] **Unofficial deletion** — `delete_bookmark_unofficial` via `twitter unbookmark`, injected through the existing `remove_candidates(delete_bookmark=...)` seam so eligibility, archiving, and the 50-per-run cap are untouched
+- [x] **Consent flag removed** — `X_BOOKMARKS_UNOFFICIAL` deleted. It was a consent gate on an opt-in path; gating the only default path would just mean the tool never runs. The **credential requirement stays**, because that is the mechanism preventing `twitter-cli` from scanning browser cookie jars
+
+#### Accepted trade-offs
+
+Recorded rather than glossed, since these are now the tool's normal operating conditions:
+
+| Property | Before | After |
+|---|---|---|
+| Cost | Paid tier | **Free** |
+| Fetch ceiling | ~300/run | Cursor-paginated |
+| Credential | OAuth, `bookmark.*` scoped, revocable | `auth_token`, ≈ full account access |
+| Sanctioned | Yes | **No** — violates the Developer Agreement |
+| Exposure | One-time backfill (v1.6 hybrid) | **Every sync, including deletes** |
+| Delete semantics | Documented 404 = already absent | Inferred from a narrow stderr allowlist |
+
+The delete-semantics regression is the sharpest edge. Anything not positively matched as "already absent" raises rather than reporting success, because a false success would archive the note while the bookmark still exists on X. Use `--official` for removal when that distinction matters.
 
 ## Planned
 
@@ -66,7 +90,6 @@ Items are grouped into execution tiers in priority order. Each links to the corr
 - [ ] **[#15] X API rate-limit backoff** — respect rate-limit headers with bounded retries; prerequisite for scheduled runs
 - [ ] **[#6] Chunk large categorization batches** — split 500+ bookmark runs into deterministic Claude calls; avoid silent JSON corruption
 - [ ] **[#2] Configurable bookmark cap** — expose `_MAX_BOOKMARKS` (currently hardcoded at 800) via CLI flag or env var
-- [ ] **[#17] Zero-cost bookmark retrieval path** — remove the paid X API tier from the critical path and lift the per-run fetch ceiling, **without** making the user's personal account the credential of record. Goal-stated, means-open: evaluate candidate mechanisms on cost, ToS posture, and credential blast radius before committing to one. See [`feasibility-graphql-vs-x-api.md`](feasibility-graphql-vs-x-api.md), [`feasibility-agent-reach.md`](feasibility-agent-reach.md), and [`feasibility-x-research-skill.md`](feasibility-x-research-skill.md)
 
 ### Tier 3 — Content Quality
 - [ ] **[#3] Article extraction for external links** — fetch and clean article body for non-X URLs. Originally scoped to `defuddle`; reconsider against Jina Reader, which `#16` now uses in production (see v1.6)
@@ -110,9 +133,11 @@ Items are grouped into execution tiers in priority order. Each links to the corr
 | 2026-08-03 | [`public-clis/twitter-cli`](feasibility-agent-reach.md) (Agent-Reach's delegate) | **Rejected on risk, not capability** | **Clears the capability bar outright** — free, Apache-2.0, Python, reads own bookmarks + folders + create/delete, cursor-paginated, dynamic queryIds. Declined because it ships an explicit anti-detection stack: TLS fingerprint impersonation, `x-client-transaction-id` forgery, timing jitter documented as evading pattern detection, and full browser-cookie forwarding |
 | 2026-08-03 | [`rohunvora/x-research-skill`](feasibility-x-research-skill.md) | Rejected | Wrapper over the **paid** official API (~$0.50/search) — wrong cost direction; bookmarks command was added and reverted 116s later, absent at `HEAD` |
 
-**Status as of 2026-08-03: partially addressed by `#18` (v1.6); the full-replacement question remains blocked on a risk decision, not on further research.**
+**Status: RESOLVED 2026-08-04 by `#19` (v1.7).**
 
-`#18` implements the hybrid split rather than resolving `#17` outright. It takes the **fetch-ceiling** half — a one-time manual backfill past the ~300/run limit — while leaving routine syncs and all deletion on the sanctioned OAuth path. `#17` stays open for the **recurring-cost** half, which is the part that would require running the unsanctioned mechanism continuously against the real account. That remains a user decision about acceptable risk, and the recommendation against it stands.
+`#17` asked to remove the paid tier from the critical path without making the personal account the credential of record. It was resolved by accepting the second half of that trade rather than satisfying it: `twitter-cli` is now the default for reads and deletes, the X developer platform is gone, and `auth_token` **is** the credential of record.
+
+The decision was made explicitly by the maintainer with the risk documented (see `Accepted trade-offs` under v1.7). The candidate log below is retained as the evidence trail for *why* no lower-risk option was adopted: none existed. `--official` remains available as an escape hatch, since the chosen mechanism is known to be brittle against X front-end builds.
 
 `#17` was deliberately written goal-scoped so a safer third mechanism could be adopted if one existed. The 2026-08-03 sweep establishes that none does:
 

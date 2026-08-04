@@ -1,14 +1,12 @@
-"""Tests for the opt-in unofficial (cookie/GraphQL) backfill path.
+"""Tests for the cookie/GraphQL client, now the default retrieval mechanism.
 
-These tests exist to protect two things that matter more than the feature:
+The consent flag that previously gated this path was removed when it became the
+default: gating the only working path would just mean the tool never runs.
 
-1. The path is OFF unless explicitly enabled. A silent fallback to an
-   unsanctioned mechanism would violate the account-risk posture recorded in
-   docs/feasibility-agent-reach.md.
-2. Credentials must be supplied explicitly. `twitter-cli` scans Chrome/Edge
-   cookie jars when TWITTER_AUTH_TOKEN/TWITTER_CT0 are absent, which harvests
-   session cookies without consent. Refusing to run without both variables is
-   what prevents that scan from ever happening.
+The credential requirement stays, and is the single most important test in this
+file. `twitter-cli` scans Chrome/Edge cookie jars when
+TWITTER_AUTH_TOKEN/TWITTER_CT0 are absent, harvesting session cookies without
+consent. Refusing to spawn without both is what prevents that scan.
 """
 
 from __future__ import annotations
@@ -22,12 +20,11 @@ import pytest
 from src.unofficial_client import (
     AUTH_TOKEN_ENV,
     CT0_ENV,
-    ENABLE_ENV,
-    UnofficialDisabledError,
     UnofficialFetchError,
-    ensure_ready,
+    delete_bookmark_unofficial,
+    ensure_credentials,
     fetch_bookmarks_unofficial,
-    is_enabled,
+    has_credentials,
     parse_cli_tweet,
     parse_cli_tweets,
 )
@@ -35,9 +32,8 @@ from src.unofficial_client import (
 
 @pytest.fixture
 def enabled_env():
-    """Environment with the path enabled and explicit credentials present."""
+    """Environment with explicit credentials present."""
     return {
-        ENABLE_ENV: "1",
         AUTH_TOKEN_ENV: "cookie-auth-token",
         CT0_ENV: "cookie-ct0",
     }
@@ -72,29 +68,9 @@ def cli_tweet_data():
     }
 
 
-class TestGating:
-    def test_disabled_when_env_absent(self):
-        """Default state must be OFF: absence of the flag is not consent."""
-        assert is_enabled({}) is False
-
-    @pytest.mark.parametrize("value", ["0", "", "false", "no"])
-    def test_disabled_for_non_affirmative_values(self, value):
-        """Only an explicit affirmative enables an unsanctioned mechanism."""
-        assert is_enabled({ENABLE_ENV: value}) is False
-
-    @pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes"])
-    def test_enabled_for_affirmative_values(self, value):
-        assert is_enabled({ENABLE_ENV: value}) is True
-
-    def test_ensure_ready_refuses_when_disabled(self):
-        env = {AUTH_TOKEN_ENV: "a", CT0_ENV: "b"}
-        with pytest.raises(UnofficialDisabledError):
-            ensure_ready(env)
-
+class TestCredentialGate:
     @pytest.mark.parametrize("missing", [AUTH_TOKEN_ENV, CT0_ENV])
-    def test_ensure_ready_refuses_without_explicit_credentials(
-        self, enabled_env, missing
-    ):
+    def test_refuses_without_explicit_credentials(self, enabled_env, missing):
         """Missing either cookie must abort BEFORE twitter-cli is invoked.
 
         If we invoked it anyway, upstream would silently scan the browser
@@ -103,11 +79,24 @@ class TestGating:
         env = dict(enabled_env)
         del env[missing]
         with pytest.raises(UnofficialFetchError) as exc:
-            ensure_ready(env)
+            ensure_credentials(env)
         assert missing in str(exc.value)
 
-    def test_ensure_ready_passes_when_fully_configured(self, enabled_env):
-        ensure_ready(enabled_env)  # must not raise
+    def test_refuses_on_blank_credentials(self, enabled_env):
+        """An empty string is absence, not a credential; treating it as present
+        would hand twitter-cli nothing and trigger the jar scan anyway."""
+        env = dict(enabled_env, **{AUTH_TOKEN_ENV: "   "})
+        with pytest.raises(UnofficialFetchError):
+            ensure_credentials(env)
+
+    def test_passes_when_fully_configured(self, enabled_env):
+        ensure_credentials(enabled_env)  # must not raise
+
+    def test_has_credentials_reports_without_raising(self, enabled_env):
+        """The CLI needs to check readiness before choosing a path, without
+        an exception as control flow."""
+        assert has_credentials(enabled_env) is True
+        assert has_credentials({}) is False
 
 
 class TestAdapter:
@@ -235,9 +224,9 @@ class TestFetch:
         with pytest.raises(UnofficialFetchError):
             fetch_bookmarks_unofficial(max_count=10, env=enabled_env, runner=runner)
 
-    def test_refuses_when_disabled(self, cli_tweet_data):
+    def test_refuses_without_credentials(self, cli_tweet_data):
         runner = self._runner(json.dumps([cli_tweet_data]))
-        with pytest.raises(UnofficialDisabledError):
+        with pytest.raises(UnofficialFetchError):
             fetch_bookmarks_unofficial(max_count=10, env={}, runner=runner)
 
     def test_missing_cli_reports_install_hint(self, enabled_env):
@@ -258,6 +247,67 @@ class TestFetch:
         with pytest.raises(UnofficialFetchError) as exc:
             fetch_bookmarks_unofficial(max_count=10, env=enabled_env, runner=runner)
         assert "timed out" in str(exc.value)
+
+
+class TestDelete:
+    """Deletion over the private GraphQL surface.
+
+    This is the highest-stakes operation in the tool: a wrong delete removes a
+    bookmark permanently, and unlike the official DELETE there is no documented
+    404-means-already-absent contract to rely on. These tests pin the semantics
+    we chose in its place.
+    """
+
+    def _runner(self, returncode=0, stderr=""):
+        def run(cmd, **kwargs):
+            class Result:
+                pass
+            r = Result()
+            r.returncode = returncode
+            r.stdout = ""
+            r.stderr = stderr
+            r.cmd = cmd
+            r.kwargs = kwargs
+            run.captured = r
+            return r
+        return run
+
+    def test_invokes_unbookmark_with_tweet_id(self, enabled_env):
+        runner = self._runner()
+        result = delete_bookmark_unofficial(
+            "1234567890", env=enabled_env, runner=runner
+        )
+        assert runner.captured.cmd == ["twitter", "unbookmark", "1234567890"]
+        assert result.tweet_id == "1234567890"
+        assert result.already_absent is False
+
+    def test_credentials_never_in_argv_for_deletes(self, enabled_env):
+        runner = self._runner()
+        delete_bookmark_unofficial("1", env=enabled_env, runner=runner)
+        assert "cookie-auth-token" not in " ".join(runner.captured.cmd)
+        assert runner.captured.kwargs["env"][AUTH_TOKEN_ENV] == "cookie-auth-token"
+
+    @pytest.mark.parametrize(
+        "stderr", ["tweet not found", "Bookmark does not exist", "NOT FOUND"]
+    )
+    def test_already_absent_is_not_an_error(self, enabled_env, stderr):
+        """Re-running a removal must be safe. Treating 'not found' as failure
+        would strand notes that were already unbookmarked on a prior run."""
+        runner = self._runner(returncode=1, stderr=stderr)
+        result = delete_bookmark_unofficial("1", env=enabled_env, runner=runner)
+        assert result.already_absent is True
+
+    def test_unrecognised_failure_raises(self, enabled_env):
+        """Anything we cannot positively identify as 'already absent' must fail
+        loudly rather than be reported as a successful deletion."""
+        runner = self._runner(returncode=1, stderr="rate limited")
+        with pytest.raises(UnofficialFetchError):
+            delete_bookmark_unofficial("1", env=enabled_env, runner=runner)
+
+    def test_refuses_without_credentials(self):
+        runner = self._runner()
+        with pytest.raises(UnofficialFetchError):
+            delete_bookmark_unofficial("1", env={}, runner=runner)
 
 
 class TestPayloadShapes:

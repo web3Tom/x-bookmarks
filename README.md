@@ -1,6 +1,6 @@
 # x-bookmarks
 
-Fetch your `x.com` bookmarks through the X API, classify them with Claude, and save them as structured Obsidian Markdown notes.
+Fetch your `x.com` bookmarks for free, classify them with Claude, and save them as structured Obsidian Markdown notes. No X developer account required.
 
 Project URL: `https://github.com/web3Tom/x-bookmarks`
 
@@ -8,11 +8,13 @@ Project URL: `https://github.com/web3Tom/x-bookmarks`
 
 This project is for developers who want to turn saved X posts and articles into a categorized knowledge base. To use it, you need:
 
-- an X developer app/project with bookmark access
 - Python 3.11+
 - `uv`
 - an Anthropic API key
 - an Obsidian vault or another target directory for the generated notes
+- `twitter-cli` (`pipx install twitter-cli`) and your X session cookies
+
+**No X developer account or API subscription is required.** By default the tool reads bookmarks through `twitter-cli`, which uses X's private GraphQL API with your session cookies rather than the paid developer platform. See [Retrieval mechanism](#retrieval-mechanism) for what that means and its risks. The official OAuth path is still available via `--official` if you have a developer app and prefer the sanctioned route.
 
 ## Quick Start
 
@@ -28,9 +30,24 @@ uv sync
 cp .env.example .env
 ```
 
-Add your `CLIENT_ID` first. The OAuth helper will fill in the access token, refresh token, and user ID.
+Only `ANTHROPIC_API_KEY` and `KNOWLEDGE_BASE_DIR` are needed for a default run. The X OAuth entries are optional and used only with `--official`.
 
-### 3. Authenticate with X
+### 3. Supply your X session cookies
+
+```bash
+pipx install twitter-cli
+
+# Export from x.com via DevTools > Application > Cookies, or the Cookie-Editor extension
+export TWITTER_AUTH_TOKEN='...'
+export TWITTER_CT0='...'
+```
+
+Both are **required**, not optional. This is a safety mechanism: when they are absent, `twitter-cli` scans your Chrome/Edge cookie jars to find them. Refusing to run without both is what prevents that unconsented scan.
+
+<details>
+<summary>Using the official OAuth path instead (optional)</summary>
+
+If you have an X developer app and prefer the sanctioned API, run:
 
 ```bash
 uv run x-bookmarks-auth
@@ -38,6 +55,9 @@ uv run x-bookmarks-auth
 
 This opens a browser for OAuth 2.0 PKCE authorization and writes the returned credentials to `.env`.
 The requested X scopes include `bookmark.read` and `bookmark.write`; the write scope is only used by the explicit removal mode.
+Then pass `--official` on every run. This costs money and is subject to the ~300-per-run pagination ceiling.
+
+</details>
 
 ### 4. Add your Anthropic API key
 
@@ -77,8 +97,8 @@ uv run x-bookmarks
 
 ## Features
 
-- Fetches bookmarks from the X API with pagination (up to 100 per page, 800 max per run)
-- Refreshes expired access tokens automatically
+- Fetches bookmarks for free via `twitter-cli`, cursor-paginated with no ~300-per-run ceiling
+- Optional `--official` OAuth path with automatic token refresh
 - Deduplicates against previously saved notes before categorizing
 - Uses Claude to generate a title plus `pillar`, `mechanics`, and optional `entity_tags`
 - Writes Obsidian-friendly Markdown with Dataview-compatible frontmatter
@@ -89,9 +109,10 @@ uv run x-bookmarks
 
 ## Known Limitations
 
-- **X API pagination bug:** The bookmarks endpoint often stops returning pages after approximately 300 bookmarks (~3 pages), even when you have more saved. This is a known X API issue. Run the tool regularly so new bookmarks stay within the retrievable window. To recover history beyond this ceiling, see [Unofficial backfill](#unofficial-backfill-opt-in).
+- **`--official` pagination ceiling:** On the official path the bookmarks endpoint often stops returning pages after approximately 300 bookmarks (~3 pages). This is a known X API issue and does not affect the default `twitter-cli` path, which is cursor-paginated.
 - **No fetch-time dedup:** All available pages are fetched before deduplication runs. There is no early-stop optimization that skips remaining pages when duplicates are found.
-- **API tier requirement:** Bookmark access requires at least the X API Basic tier. The Free tier does not support bookmarks.
+- **`--official` tier requirement:** The official path requires at least the X API Basic tier; the Free tier does not support bookmarks. The default path needs no developer account at all.
+- **Default path is unsanctioned:** It violates the X Developer Agreement and can get your account flagged. See [Retrieval mechanism](#retrieval-mechanism).
 
 ## Migration
 
@@ -145,13 +166,13 @@ Eligibility is strict: only active notes in `KNOWLEDGE_BASE_DIR` with exact `syn
 
 After a successful X deletion, or a `404` indicating the bookmark is already absent, the note is annotated with `bookmark_removed: true` and `bookmark_removed_at`, then moved to `KNOWLEDGE_BASE_DIR/archive`. Archived notes do not block future sync deduplication.
 
-If deletion returns `403`, re-run `uv run x-bookmarks-auth`; older tokens do not gain the new `bookmark.write` scope automatically.
+Deletion uses `twitter-cli` by default. Add `--official` to delete through the OAuth API instead, which has stricter, documented error semantics; if that returns `403`, re-run `uv run x-bookmarks-auth`, as older tokens do not gain the `bookmark.write` scope automatically.
 
 Live deletion is capped at 50 bookmarks per run. Use `--max N` to process fewer.
 
 ## Enriching Link Titles
 
-The X API often returns `None` for an external link's title, which makes notes less readable and gives Claude less signal during categorization. Opt in to backfill those titles:
+External link titles are frequently missing (always, on the default path, which emits bare URLs), which makes notes less readable and gives Claude less signal during categorization. Opt in to backfill those titles:
 
 ```bash
 uv run x-bookmarks --enrich-titles
@@ -161,46 +182,46 @@ Titles are fetched from [Jina Reader](https://r.jina.ai) with `GET https://r.jin
 
 **Trade-off:** every enriched URL is disclosed to a third-party service. That is why this is opt-in rather than automatic. If your bookmarks include private or sensitive links, leave it off.
 
-## Unofficial Backfill (opt-in)
+## Retrieval Mechanism
 
-> **This path violates the X Developer Agreement and can get your account flagged or locked.** It reads X's private GraphQL API using your session cookies rather than the sanctioned API. Read [`docs/feasibility-agent-reach.md`](docs/feasibility-agent-reach.md) before enabling it.
+By default, fetching **and removal** go through `twitter-cli`, which calls X's private GraphQL API using your session cookies.
 
-The official bookmarks endpoint stops paginating at roughly 300 bookmarks per run, so older history is unreachable through it. This path exists to recover that history **once**, manually, and then be turned off again.
+> **This violates the X Developer Agreement and can get your account flagged or locked.** `twitter-cli` ships TLS fingerprint impersonation and request timing jitter documented as evading pattern detection, so its traffic is built to be indistinguishable from a browser. Running it on every sync is a recurring automated pattern against your real, named account. Read [`docs/feasibility-agent-reach.md`](docs/feasibility-agent-reach.md) for the full assessment.
 
-It is deliberately narrow:
+This was chosen deliberately: it removes the paid API entirely and lifts the official endpoint's ~300-per-run pagination ceiling.
 
-- **Read-only.** Deletion always uses the official API. `--backfill-unofficial` is refused in combination with `--remove-synthesized-bookmarks`.
-- **Off by default,** behind two independent gates.
-- **No silent fallback** in either direction. A misconfigured backfill fails loudly rather than quietly becoming a normal run.
+### What changes versus the official API
 
-### Setup
+| | Default (`twitter-cli`) | `--official` |
+|---|---|---|
+| Cost | Free | Paid tier required |
+| Fetch ceiling | Cursor-paginated, bounded only by `--max-bookmarks` | ~300 per run |
+| Credential | `auth_token` (≈ full account access) | OAuth, scoped to `bookmark.*`, revocable |
+| Sanctioned | No | Yes |
+| Link titles | Never populated (bare URLs) | Sometimes populated |
+| Delete semantics | Inferred from stderr | Documented 404 = already absent |
 
-```bash
-pipx install twitter-cli
+### Delete semantics caveat
 
-# Export from x.com via DevTools > Application > Cookies, or the Cookie-Editor extension
-export TWITTER_AUTH_TOKEN='...'
-export TWITTER_CT0='...'
-export X_BOOKMARKS_UNOFFICIAL=1
+The official `DELETE` documents 404 as "already absent", which makes re-running a removal safe. The private surface has no such contract, so absence is inferred from a narrow stderr allowlist. Anything not positively matched raises rather than reporting success, because reporting a failed delete as success would archive the note while the bookmark still exists on X.
 
-uv run x-bookmarks --backfill-unofficial --backfill-max 5000
-```
-
-Both credentials are **required**, not optional. This is a safety mechanism: when they are absent, upstream `twitter-cli` scans your Chrome/Edge cookie jars to find them. Refusing to run without both is what prevents that unconsented scan.
+If that matters for a given cleanup, run removal with `--official`.
 
 ### Flags
 
 | Flag | Description |
 |------|-------------|
-| `--backfill-unofficial` | Fetch via `twitter-cli` instead of the official API. Read-only. |
-| `--backfill-max N` | Maximum bookmarks to request (default 5000). Requires `--backfill-unofficial`. |
-| `--enrich-titles` | Backfill missing external-link titles via Jina Reader. Usable on either path. |
+| `--official` | Use the official X API (OAuth) for fetching and removal. Requires a developer app; incurs cost. |
+| `--max-bookmarks N` | Maximum bookmarks to request via `twitter-cli` (default 5000). Not valid with `--official`. |
+| `--enrich-titles` | Backfill missing external-link titles via Jina Reader. Works on either path. |
 
-Pairing `--enrich-titles` with a backfill is worthwhile: `twitter-cli` emits bare URL strings with no title metadata, so on this path *every* external link title starts empty.
+Pair `--enrich-titles` with the default path: `twitter-cli` emits bare URL strings with no title metadata, so on this path *every* external link title starts empty.
 
-### Recommended usage
-
-Run the backfill once, then unset `X_BOOKMARKS_UNOFFICIAL` and return to the OAuth path for routine syncs. A single interactive run presents a far smaller detection surface than a recurring automated job. Do not schedule this.
+```bash
+uv run x-bookmarks --enrich-titles
+uv run x-bookmarks --max-bookmarks 5000 --enrich-titles   # deep backfill
+uv run x-bookmarks --official                             # sanctioned, paid
+```
 
 ## Development
 

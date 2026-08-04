@@ -1,18 +1,24 @@
-"""Opt-in unofficial bookmark retrieval via the `twitter-cli` delegate.
+"""Bookmark retrieval and removal via the `twitter-cli` delegate.
 
-This module exists to support a ONE-TIME historical backfill past the official
-API's observed ~300-bookmarks-per-run ceiling. It is never the default path.
+This is the DEFAULT mechanism. It reads X's private GraphQL API with session
+cookies, requires no X developer account, and costs nothing.
 
-Risk posture (see docs/feasibility-agent-reach.md):
+Risk posture (see docs/feasibility-agent-reach.md) — accepted deliberately:
 
-- `twitter-cli` reads X's private GraphQL API using session cookies, which
-  violates X's Developer Agreement and can get the account flagged.
-- `auth_token` is roughly full-account access, unlike the `bookmark.*`-scoped
-  OAuth tokens used everywhere else in this project.
-- Therefore: two independent gates (an explicit enable flag AND explicitly
-  supplied credentials), no writes, and no silent fallback from the OAuth path.
+- This violates X's Developer Agreement and can get the account flagged.
+  `twitter-cli` ships TLS fingerprint impersonation and timing jitter
+  documented as evading pattern detection, so the traffic is designed to be
+  indistinguishable from a browser rather than to identify itself.
+- `auth_token` is roughly full-account access, not a `bookmark.*`-scoped
+  revocable token.
+- Running on every sync, including destructive removals, is a recurring
+  automated pattern against a real named account.
 
-The credential requirement is a safety mechanism, not ergonomics. When
+The official OAuth path remains implemented and reachable via `--official`.
+It is no longer required, no longer default, and needs no credentials to be
+configured for the tool to run.
+
+The credential requirement below is a safety mechanism, not ergonomics. When
 TWITTER_AUTH_TOKEN/TWITTER_CT0 are absent, upstream `twitter-cli` scans
 Chrome/Edge cookie jars to find them. Refusing to invoke it without both
 variables is what prevents that unconsented scan.
@@ -27,16 +33,20 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Any
 
-from src.api_client import _is_article_url, _is_external_url
+from src.api_client import DeleteBookmarkResult, _is_article_url, _is_external_url
 from src.models import ExternalLink, Media, Tweet, User
 
-ENABLE_ENV = "X_BOOKMARKS_UNOFFICIAL"
 AUTH_TOKEN_ENV = "TWITTER_AUTH_TOKEN"
 CT0_ENV = "TWITTER_CT0"
 
 _CLI_NAME = "twitter"
-_AFFIRMATIVE = {"1", "true", "yes", "on"}
 _SUBPROCESS_TIMEOUT_S = 300
+
+# Substrings that identify "this bookmark is already gone" in twitter-cli's
+# stderr. The official API answered this with a documented 404; the private
+# surface has no such contract, so we pattern-match a narrow allowlist and
+# treat everything else as a hard failure.
+_ALREADY_ABSENT_MARKERS = ("not found", "does not exist", "no such")
 
 # twitter-cli metric names -> official X API v2 names. Downstream consumers
 # (markdown_writer, categorizer) read the official names; emitting twitter-cli's
@@ -51,38 +61,31 @@ _METRIC_MAP = {
 }
 
 
-class UnofficialDisabledError(RuntimeError):
-    """Raised when the unofficial path is used without being explicitly enabled."""
-
-
 class UnofficialFetchError(RuntimeError):
-    """Raised when the unofficial fetch cannot run or returns unusable output."""
+    """Raised when the unofficial call cannot run or returns unusable output."""
 
 
-def is_enabled(env: Mapping[str, str]) -> bool:
-    """Return True only for an explicit affirmative value.
+def _missing_credentials(env: Mapping[str, str]) -> list[str]:
+    """Names of credentials that are absent or blank. Blank counts as absent."""
+    return [
+        name
+        for name in (AUTH_TOKEN_ENV, CT0_ENV)
+        if not (env.get(name) or "").strip()
+    ]
 
-    Absence of the flag is not consent, so anything unrecognised is False.
-    """
-    return env.get(ENABLE_ENV, "").strip().lower() in _AFFIRMATIVE
+
+def has_credentials(env: Mapping[str, str]) -> bool:
+    """Report readiness without raising, for CLI path selection."""
+    return not _missing_credentials(env)
 
 
-def ensure_ready(env: Mapping[str, str]) -> None:
-    """Validate both gates before any subprocess is spawned.
+def ensure_credentials(env: Mapping[str, str]) -> None:
+    """Require both cookies before any subprocess is spawned.
 
     Raises:
-        UnofficialDisabledError: the enable flag is absent or not affirmative.
-        UnofficialFetchError: credentials were not supplied explicitly.
+        UnofficialFetchError: either credential is absent or blank.
     """
-    if not is_enabled(env):
-        raise UnofficialDisabledError(
-            f"Unofficial bookmark retrieval is disabled. Set {ENABLE_ENV}=1 to "
-            "enable it. This path uses X's private API with session cookies, "
-            "violates the X Developer Agreement, and can get your account "
-            "flagged. See docs/feasibility-agent-reach.md before enabling."
-        )
-
-    missing = [name for name in (AUTH_TOKEN_ENV, CT0_ENV) if not env.get(name)]
+    missing = _missing_credentials(env)
     if missing:
         raise UnofficialFetchError(
             f"Missing required credential(s): {', '.join(missing)}. Export them "
@@ -228,41 +231,16 @@ def fetch_bookmarks_unofficial(
     env: Mapping[str, str],
     runner: Callable[..., Any] = subprocess.run,
 ) -> tuple[Tweet, ...]:
-    """Fetch bookmarks through `twitter-cli`. Read-only; never deletes.
+    """Fetch bookmarks through `twitter-cli`.
 
-    Credentials travel in the child environment, never in argv, because argv
-    lands in shell history, `ps` output, and agent session transcripts.
+    Cursor-paginated by the delegate, so unlike the official endpoint's
+    observed ~300-per-run ceiling, `max_count` is the only practical bound.
     """
-    ensure_ready(env)
-
-    cmd = [
-        _CLI_NAME, "bookmarks",
-        "--json",
-        "--max", str(max_count),
-        "--full-text",
-    ]
-
-    child_env = dict(os.environ)
-    child_env[AUTH_TOKEN_ENV] = env[AUTH_TOKEN_ENV]
-    child_env[CT0_ENV] = env[CT0_ENV]
-
-    try:
-        result = runner(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=_SUBPROCESS_TIMEOUT_S,
-            env=child_env,
-        )
-    except FileNotFoundError as exc:
-        raise UnofficialFetchError(
-            f"`{_CLI_NAME}` not found on PATH. Install it with "
-            "`pipx install twitter-cli`."
-        ) from exc
-    except subprocess.TimeoutExpired as exc:
-        raise UnofficialFetchError(
-            f"`{_CLI_NAME} bookmarks` timed out after {_SUBPROCESS_TIMEOUT_S}s."
-        ) from exc
+    result = _run_cli(
+        ["bookmarks", "--json", "--max", str(max_count), "--full-text"],
+        env=env,
+        runner=runner,
+    )
 
     if result.returncode != 0:
         stderr = (result.stderr or "").strip()
@@ -278,3 +256,70 @@ def fetch_bookmarks_unofficial(
         ) from exc
 
     return parse_cli_tweets(payload)
+
+
+def delete_bookmark_unofficial(
+    tweet_id: str,
+    *,
+    env: Mapping[str, str],
+    runner: Callable[..., Any] = subprocess.run,
+) -> DeleteBookmarkResult:
+    """Remove one bookmark via `twitter unbookmark`.
+
+    Semantics note: the official `DELETE .../bookmarks/{id}` documents 404 as
+    "already absent", which makes re-running a removal safe. The private
+    GraphQL surface offers no such contract, so absence is inferred from a
+    narrow stderr allowlist. Anything not positively matched is raised rather
+    than reported as a successful deletion — reporting a failed delete as
+    success would archive the note while the bookmark still exists on X.
+    """
+    result = _run_cli(["unbookmark", tweet_id], env=env, runner=runner)
+
+    if result.returncode == 0:
+        return DeleteBookmarkResult(tweet_id=tweet_id)
+
+    stderr = (result.stderr or "").strip()
+    if any(marker in stderr.lower() for marker in _ALREADY_ABSENT_MARKERS):
+        return DeleteBookmarkResult(tweet_id=tweet_id, already_absent=True)
+
+    raise UnofficialFetchError(
+        f"`{_CLI_NAME} unbookmark {tweet_id}` exited {result.returncode}: {stderr}"
+    )
+
+
+def _run_cli(
+    args: Sequence[str],
+    *,
+    env: Mapping[str, str],
+    runner: Callable[..., Any],
+) -> Any:
+    """Spawn twitter-cli after validating credentials.
+
+    Credentials travel in the child environment, never in argv, because argv
+    lands in shell history, `ps` output, and agent session transcripts.
+    """
+    ensure_credentials(env)
+
+    cmd = [_CLI_NAME, *args]
+    child_env = dict(os.environ)
+    child_env[AUTH_TOKEN_ENV] = env[AUTH_TOKEN_ENV]
+    child_env[CT0_ENV] = env[CT0_ENV]
+
+    try:
+        return runner(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=_SUBPROCESS_TIMEOUT_S,
+            env=child_env,
+        )
+    except FileNotFoundError as exc:
+        raise UnofficialFetchError(
+            f"`{_CLI_NAME}` not found on PATH. Install it with "
+            "`pipx install twitter-cli`."
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise UnofficialFetchError(
+            f"`{_CLI_NAME} {' '.join(args)}` timed out after "
+            f"{_SUBPROCESS_TIMEOUT_S}s."
+        ) from exc

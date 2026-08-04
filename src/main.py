@@ -29,14 +29,13 @@ from src.removal import (
 from src.unofficial_client import (
     AUTH_TOKEN_ENV,
     CT0_ENV,
-    ENABLE_ENV,
-    UnofficialDisabledError,
     UnofficialFetchError,
+    delete_bookmark_unofficial,
     fetch_bookmarks_unofficial,
 )
 
 _HISTORY_FILENAME = ".x-bookmarks-history.jsonl"
-_DEFAULT_BACKFILL_MAX = 5000
+_DEFAULT_MAX_BOOKMARKS = 5000
 
 
 def _build_run_record(
@@ -118,22 +117,21 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help=f"Maximum live removals to attempt, capped at {max_live_removals()}.",
     )
     parser.add_argument(
-        "--backfill-unofficial",
+        "--official",
         action="store_true",
         help=(
-            "Fetch bookmarks via twitter-cli instead of the official API. "
-            f"Read-only, and requires {ENABLE_ENV}=1 plus explicit "
-            f"{AUTH_TOKEN_ENV}/{CT0_ENV}. Uses X's private API with session "
-            "cookies: violates the X Developer Agreement and can get your "
-            "account flagged. Intended for a one-time historical backfill."
+            "Use the official X API (OAuth) instead of twitter-cli. Requires a "
+            "configured X developer app and incurs API cost. Applies to both "
+            "fetching and removal."
         ),
     )
     parser.add_argument(
-        "--backfill-max",
+        "--max-bookmarks",
         type=int,
         help=(
-            "Maximum bookmarks to request during an unofficial backfill "
-            f"(default {_DEFAULT_BACKFILL_MAX}). Requires --backfill-unofficial."
+            "Maximum bookmarks to request when fetching via twitter-cli "
+            f"(default {_DEFAULT_MAX_BOOKMARKS}). Ignored with --official, "
+            "which uses the API's own pagination cap."
         ),
     )
     parser.add_argument(
@@ -150,22 +148,15 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("--dry-run, --confirm, and --max require --remove-synthesized-bookmarks")
     if args.max_removals is not None and args.max_removals < 1:
         parser.error("--max must be greater than zero")
-    # Deletion stays on the official API permanently: the documented DELETE has
-    # idempotency and error semantics the private GraphQL surface does not.
-    if args.backfill_unofficial and args.remove_synthesized_bookmarks:
-        parser.error(
-            "--backfill-unofficial cannot be combined with "
-            "--remove-synthesized-bookmarks; removal always uses the official API"
-        )
     if args.enrich_titles and args.remove_synthesized_bookmarks:
         parser.error(
             "--enrich-titles cannot be combined with "
             "--remove-synthesized-bookmarks; removal mode never fetches or categorizes"
         )
-    if args.backfill_max is not None and not args.backfill_unofficial:
-        parser.error("--backfill-max requires --backfill-unofficial")
-    if args.backfill_max is not None and args.backfill_max < 1:
-        parser.error("--backfill-max must be greater than zero")
+    if args.max_bookmarks is not None and args.official:
+        parser.error("--max-bookmarks does not apply to --official")
+    if args.max_bookmarks is not None and args.max_bookmarks < 1:
+        parser.error("--max-bookmarks must be greater than zero")
     return args
 
 
@@ -234,8 +225,11 @@ def _run_remove_synthesized_bookmarks(
     dry_run: bool,
     confirmed: bool,
     max_removals: int | None,
+    official: bool = False,
     input_func=None,
 ) -> int:
+    if official:
+        _require_official_credentials(config, run_id)
     output_dir = config.output_dir
     archive_dir = output_dir / "archive"
     print(f"[{run_id}] Output directory: {output_dir}")
@@ -316,9 +310,13 @@ def _run_remove_synthesized_bookmarks(
             output_dir=output_dir,
             dry_run=dry_run,
             max_removals=max_removals,
-            delete_bookmark=lambda tweet_id: delete_bookmark(config, tweet_id),
+            delete_bookmark=_build_deleter(config, official=official),
         )
-    except (BookmarkWriteScopeError, BookmarkDeleteRateLimitError) as exc:
+    except (
+        BookmarkWriteScopeError,
+        BookmarkDeleteRateLimitError,
+        UnofficialFetchError,
+    ) as exc:
         duration_ms = int((time.monotonic() - t_start) * 1000)
         message = str(exc)
         record = _build_removal_record(
@@ -381,37 +379,59 @@ def _run_remove_synthesized_bookmarks(
     return 1 if stats.failed else 0
 
 
+def _build_deleter(config, *, official: bool):
+    """Return the delete callable for the selected mechanism.
+
+    `remove_candidates` takes deletion as an injected callable, so switching
+    mechanism does not touch the eligibility, archiving, or capping logic that
+    makes removal safe.
+    """
+    if official:
+        return lambda tweet_id: delete_bookmark(config, tweet_id)
+    return lambda tweet_id: delete_bookmark_unofficial(tweet_id, env=os.environ)
+
+
+def _require_official_credentials(config, run_id: str) -> None:
+    """Exit cleanly when --official is used without an X developer app.
+
+    OAuth credentials are optional since twitter-cli became the default, so
+    this is now a reachable user error rather than an impossible state.
+    """
+    if not config.has_official_credentials:
+        print(
+            f"[{run_id}] --official requires CLIENT_ID, ACCESS_TOKEN, "
+            "REFRESH_TOKEN and USER_ID.\n"
+            f"[{run_id}]   Run 'x-bookmarks-auth' to configure them, or drop "
+            "--official to use twitter-cli."
+        )
+        sys.exit(1)
+
+
 def _fetch_tweets(
     config,
     run_id: str,
     *,
-    backfill_unofficial: bool,
-    backfill_max: int | None,
+    official: bool,
+    max_bookmarks: int | None,
 ):
-    """Fetch bookmarks from the official API, or the opt-in unofficial path.
+    """Fetch bookmarks via twitter-cli by default, or the official API.
 
-    The official path stays the default. The unofficial path is only reachable
-    through an explicit CLI flag, and fails loudly rather than falling back, so
-    a misconfigured backfill can never silently become a normal run.
+    Neither path falls back to the other. A misconfigured run fails loudly
+    rather than silently switching mechanism, because the two have very
+    different cost and account-risk profiles and a silent switch would hide
+    which one actually ran.
     """
-    if not backfill_unofficial:
-        print(f"[{run_id}] Fetching bookmarks for user {config.user_id}...")
+    if official:
+        _require_official_credentials(config, run_id)
+        print(f"[{run_id}] Fetching bookmarks for user {config.user_id} (official API)...")
         return fetch_bookmarks(config)
 
-    limit = backfill_max or _DEFAULT_BACKFILL_MAX
-    print(
-        f"[{run_id}] UNOFFICIAL BACKFILL via twitter-cli (max {limit}).\n"
-        f"[{run_id}]   Uses X's private API with session cookies. This violates\n"
-        f"[{run_id}]   the X Developer Agreement and can get your account flagged.\n"
-        f"[{run_id}]   Read-only: no bookmarks will be deleted on this path."
-    )
+    limit = max_bookmarks or _DEFAULT_MAX_BOOKMARKS
+    print(f"[{run_id}] Fetching bookmarks via twitter-cli (max {limit})...")
     try:
         return fetch_bookmarks_unofficial(max_count=limit, env=os.environ)
-    except UnofficialDisabledError as exc:
-        print(f"[{run_id}] Refusing to run: {exc}")
-        sys.exit(1)
     except UnofficialFetchError as exc:
-        print(f"[{run_id}] Unofficial fetch failed: {exc}")
+        print(f"[{run_id}] Fetch failed: {exc}")
         sys.exit(1)
 
 
@@ -421,8 +441,8 @@ def _run_sync(
     started_at: str,
     t_start: float,
     *,
-    backfill_unofficial: bool = False,
-    backfill_max: int | None = None,
+    official: bool = False,
+    max_bookmarks: int | None = None,
     enrich_titles: bool = False,
 ) -> None:
     """Fetch bookmarks, categorize, and write to Obsidian vault."""
@@ -438,8 +458,8 @@ def _run_sync(
     tweets = _fetch_tweets(
         config,
         run_id,
-        backfill_unofficial=backfill_unofficial,
-        backfill_max=backfill_max,
+        official=official,
+        max_bookmarks=max_bookmarks,
     )
 
     if not tweets:
@@ -566,6 +586,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             dry_run=args.dry_run,
             confirmed=args.confirm,
             max_removals=args.max_removals,
+            official=args.official,
         )
         if code:
             sys.exit(code)
@@ -576,8 +597,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         run_id,
         started_at,
         t_start,
-        backfill_unofficial=args.backfill_unofficial,
-        backfill_max=args.backfill_max,
+        official=args.official,
+        max_bookmarks=args.max_bookmarks,
         enrich_titles=args.enrich_titles,
     )
 

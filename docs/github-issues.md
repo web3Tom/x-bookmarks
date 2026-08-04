@@ -660,3 +660,57 @@ Depends on `#14` for credential storage hardening if this ever becomes routine r
 ### Priority
 
 `medium`
+
+## Issue: Replace the X developer platform with twitter-cli as the default
+
+### Summary
+
+Make `twitter-cli` the default mechanism for both fetching and removal, drop the X OAuth variables from the required configuration, and reduce the official API to an opt-in `--official` escape hatch. After this change the tool runs with no X developer account and no API cost.
+
+### Why It Matters
+
+`#18` (v1.6) captured only the fetch-ceiling half of `#17`, leaving recurring API cost in place because routine syncs still used the paid endpoint. The maintainer elected to take the remaining half, accepting the account risk documented in `docs/feasibility-agent-reach.md` in exchange for eliminating the bill and the developer-platform dependency entirely.
+
+This is a deliberate acceptance of a known trade, not an oversight. See `Accepted trade-offs` under v1.7 in `docs/roadmap.md`.
+
+### Scope
+
+- `twitter-cli` becomes the default for fetching and for removal
+- `--official` selects the OAuth path for both operations
+- `CLIENT_ID` / `ACCESS_TOKEN` / `REFRESH_TOKEN` / `USER_ID` removed from `config._REQUIRED`; only `ANTHROPIC_API_KEY` remains mandatory
+- `Config.has_official_credentials` gates `--official`, failing at startup rather than mid-run
+- `delete_bookmark_unofficial` via `twitter unbookmark`, injected through the existing `remove_candidates(delete_bookmark=...)` seam
+- `X_BOOKMARKS_UNOFFICIAL` consent flag removed; the credential requirement is retained
+- `--backfill-unofficial` / `--backfill-max` replaced by `--official` / `--max-bookmarks`
+
+### Acceptance Criteria
+
+- [x] A bare run uses `twitter-cli` and never touches the official API
+- [x] The tool loads and runs with zero OAuth variables configured
+- [x] `--official` fails at startup with actionable output when OAuth is unconfigured or partially configured
+- [x] Removal routes to `twitter-cli` by default and to OAuth under `--official`
+- [x] Credentials never appear in argv on either fetch or delete
+- [x] Missing cookies abort before any subprocess spawns, preventing the browser-jar scan
+- [x] A failed unofficial fetch exits rather than silently falling back to the paid path
+- [x] Delete failures that cannot be positively identified as "already absent" raise rather than reporting success
+- [x] The default path has end-to-end `main()` coverage, not only unit coverage
+
+### Notes
+
+**Consent flag removal.** `X_BOOKMARKS_UNOFFICIAL` was a consent gate on an opt-in path. Once the path became the default, gating it would mean the tool never runs. The credential requirement is retained and is the load-bearing safety mechanism: without `TWITTER_AUTH_TOKEN`/`TWITTER_CT0`, upstream `twitter-cli` scans Chrome/Edge cookie jars.
+
+**Delete semantics regression.** The official `DELETE` documents 404 as "already absent", making re-runs safe. The private surface has no equivalent contract, so absence is inferred from a narrow stderr allowlist and anything unmatched raises. A false success would archive the note while the bookmark still exists on X. Use `--official` for removal when that distinction matters.
+
+**Why `--official` was retained rather than deleted.** The chosen mechanism is documented as brittle against X front-end builds (queryId and feature-flag churn). Removing the only fallback for a mechanism known to break would be poor engineering, and the OAuth code is already written and tested.
+
+**`#14` is now more urgent, not less.** `auth_token` is roughly full-account access, a larger blast radius than the scoped OAuth tokens it replaces, and it is used on every run.
+
+### Labels
+
+- `enhancement`
+- `breaking-change`
+- `needs-decision`
+
+### Priority
+
+`high`

@@ -11,7 +11,12 @@ from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
-_REQUIRED = ("CLIENT_ID", "ACCESS_TOKEN", "REFRESH_TOKEN", "USER_ID", "ANTHROPIC_API_KEY")
+# Only the categorization key is universally required. The X OAuth variables
+# were dropped from this list when `twitter-cli` became the default retrieval
+# mechanism: the tool now runs with no X developer account at all. They are
+# still read when present, because `--official` remains available.
+_REQUIRED = ("ANTHROPIC_API_KEY",)
+_OFFICIAL_REQUIRED = ("CLIENT_ID", "ACCESS_TOKEN", "REFRESH_TOKEN", "USER_ID")
 _OUTPUT_DIR_ENV = "KNOWLEDGE_BASE_DIR"
 _LEGACY_OUTPUT_DIR_ENV = "KNOWLEDGE_DIR"
 _TAXONOMY_FILE_ENV = "X_BOOKMARKS_TAXONOMY_FILE"
@@ -113,6 +118,17 @@ class Config:
     output_dir: Path
     taxonomy_file: Path | None
 
+    @property
+    def has_official_credentials(self) -> bool:
+        """Whether the OAuth path is usable.
+
+        Empty rather than absent: these fields are always present on the
+        dataclass, but carry "" when no X developer account is configured.
+        """
+        return all(
+            (self.client_id, self.access_token, self.refresh_token, self.user_id)
+        )
+
 
 def load_config(env_path: Path | None = None) -> Config:
     """Load configuration from environment variables (and optional .env file)."""
@@ -133,11 +149,11 @@ def load_config(env_path: Path | None = None) -> Config:
         raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
 
     return Config(
-        client_id=os.environ["CLIENT_ID"],
+        client_id=os.environ.get("CLIENT_ID") or "",
         client_secret=os.environ.get("CLIENT_SECRET") or None,
-        access_token=os.environ["ACCESS_TOKEN"],
-        refresh_token=os.environ["REFRESH_TOKEN"],
-        user_id=os.environ["USER_ID"],
+        access_token=os.environ.get("ACCESS_TOKEN") or "",
+        refresh_token=os.environ.get("REFRESH_TOKEN") or "",
+        user_id=os.environ.get("USER_ID") or "",
         anthropic_api_key=os.environ["ANTHROPIC_API_KEY"],
         output_dir=_resolve_output_dir(env_dir),
         taxonomy_file=resolve_taxonomy_file(env_dir),
