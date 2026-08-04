@@ -166,6 +166,14 @@ uv run pytest --cov=src --cov-report=term-missing
 - [`docs/prds/prd-x-bookmark-removal.md`](docs/prds/prd-x-bookmark-removal.md)
 - [`AGENTS.md`](AGENTS.md)
 
+### Feasibility Studies
+
+Candidate-mechanism assessments backing roadmap item `#17` (zero-cost bookmark retrieval). Each records a verdict and the evidence behind it; none has been adopted.
+
+- [`docs/feasibility-graphql-vs-x-api.md`](docs/feasibility-graphql-vs-x-api.md) — cookie/GraphQL session replay vs. the official API
+- [`docs/feasibility-agent-reach.md`](docs/feasibility-agent-reach.md) — `Panniantong/Agent-Reach`
+- [`docs/feasibility-x-research-skill.md`](docs/feasibility-x-research-skill.md) — `rohunvora/x-research-skill`
+
 ## Security Notes
 
 - OAuth tokens and local configuration are stored in `.env`.

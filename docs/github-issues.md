@@ -564,3 +564,47 @@ This improves reliability for both manual and scheduled runs.
 ### Priority
 
 `high`
+
+## Issue: Zero-cost bookmark retrieval path
+
+### Summary
+
+Remove the paid X API tier from the critical path and lift the per-run fetch ceiling, without making the user's personal X account the credential of record. This issue is scoped to a **goal**, not a mechanism: candidate approaches are evaluated against cost, ToS posture, and credential blast radius before one is selected.
+
+### Why It Matters
+
+Bookmark reads on the official X API v2 effectively require a paid tier, and runs are bounded by an observed ceiling of roughly 300 bookmarks per invocation (the 2026-08-03 run fetched 199). Cost is recurring and the ceiling blocks any full backfill of an established bookmark history. Both constraints are structural — no amount of tuning inside the current mechanism removes them.
+
+### Scope
+
+- Define the acceptance bar before choosing a mechanism: no recurring API cost, no full-account credential, no unbounded maintenance tax
+- Evaluate candidate mechanisms against that bar and record findings in `docs/feasibility-*.md`
+- Keep OAuth 2.0 PKCE as the default and only documented path until a candidate clears the bar
+- If a candidate is adopted, gate it behind an explicit opt-in env flag; never silent, never default
+- Add any new credential names to the pre-commit secret-scan denylist
+
+### Acceptance Criteria
+
+- [ ] Acceptance bar is written down and each candidate is scored against it
+- [ ] A decision is recorded — adopt, reject, or defer — with the rationale
+- [ ] The OAuth path remains functional and default regardless of outcome
+- [ ] If adopted: the alternate path is opt-in, documented as to its risk posture, and covered by tests
+- [ ] If adopted: no credential is written to a tracked file, and secret-scan rules cover the new names
+
+### Notes
+
+Depends on `#14` — any non-OAuth mechanism introduces a second credential with a larger blast radius than the current scoped tokens, and plaintext `.env` storage is unacceptable for it.
+
+Partially subsumes `#1` and `#2`: a mechanism without the official pagination ceiling changes what `since_id` and `_MAX_BOOKMARKS` are for. Do not implement all three in parallel.
+
+Prior analysis in `docs/feasibility-graphql-vs-x-api.md` assessed cookie/GraphQL session replay and recommended **against** it as a primary path, on account-ban risk and credential blast radius. That recommendation stands until superseded. Further candidate assessments: `docs/feasibility-agent-reach.md`, `docs/feasibility-x-research-skill.md`.
+
+### Labels
+
+- `enhancement`
+- `reliability`
+- `needs-decision`
+
+### Priority
+
+`high`

@@ -54,12 +54,15 @@ Items are grouped into execution tiers in priority order. Each links to the corr
 - [ ] **[#15] X API rate-limit backoff** — respect rate-limit headers with bounded retries; prerequisite for scheduled runs
 - [ ] **[#6] Chunk large categorization batches** — split 500+ bookmark runs into deterministic Claude calls; avoid silent JSON corruption
 - [ ] **[#2] Configurable bookmark cap** — expose `_MAX_BOOKMARKS` (currently hardcoded at 800) via CLI flag or env var
+- [ ] **[#17] Zero-cost bookmark retrieval path** — remove the paid X API tier from the critical path and lift the per-run fetch ceiling, **without** making the user's personal account the credential of record. Goal-stated, means-open: evaluate candidate mechanisms on cost, ToS posture, and credential blast radius before committing to one. See [`feasibility-graphql-vs-x-api.md`](feasibility-graphql-vs-x-api.md), [`feasibility-agent-reach.md`](feasibility-agent-reach.md), and [`feasibility-x-research-skill.md`](feasibility-x-research-skill.md)
 
 ### Tier 3 — Content Quality
 - [ ] **[#3] Article extraction for external links** — fetch and clean article body via `defuddle` for non-X URLs
 - [ ] **[#16] External link title backfill** — after API fetch, run `defuddle` against any `ExternalLink.expanded_url` where `title is None` to populate missing titles; lighter than full article extraction and improves categorization quality and note readability
 - [ ] **[#4] Thread unrolling** — detect tweet threads and stitch related posts into a single coherent note
 - [ ] **[#5] Quote tweet expansion** — inline quoted tweet content into the parent note
+
+> **Alternate mechanism for `#3` / `#16`:** Agent-Reach reads arbitrary URLs as Markdown via `GET https://r.jina.ai/{url}` with **no API key, cookie, or account** — see [`feasibility-agent-reach.md`](feasibility-agent-reach.md) §5.1. This would remove `#16`'s "requires `defuddle` on `PATH`" precondition and carries none of `#17`'s credential risk. Trade-offs to verify before adopting: it routes every bookmarked URL through a third party (privacy), and its anonymous rate limits are unstated.
 
 ### Tier 4 — UX & Automation
 - [ ] **[#11] Verbose and quiet CLI modes** — control output verbosity for debugging vs automation contexts
@@ -76,9 +79,31 @@ Items are grouped into execution tiers in priority order. Each links to the corr
 - `#1` and `#2` pair naturally (both touch fetch loop configuration)
 - `#10` and `#11` pair naturally (both CLI flag work)
 - `#4` and `#5` share tweet-parsing expansion logic
+- `#17` **requires `#14`** — any non-OAuth path introduces a second, higher-blast-radius credential; storing it in plaintext `.env` is unacceptable, so token hardening must land first
+- `#17` partially subsumes `#1` and `#2` — a mechanism without the official pagination ceiling changes what `since_id` and `_MAX_BOOKMARKS` are for; do not implement all three in parallel
 
 ### Priority Rationale
 - **Why `#14` first:** public-release audit flags plaintext token storage as the highest remaining risk.
 - **Why `#10` second:** tiny effort, but makes every later content feature safer to iterate on and demo.
 - **Why `#1` third:** today's run showed 58 of 99 fetched bookmarks were already on disk — `since_id` would avoid fetching them in the first place.
 - **Alternate ordering:** if use is single-user and local-only, promote `#3` (article extraction) above `#14` — bigger day-to-day quality win at the cost of leaving token handling untouched.
+- **Why `#17` sits in Tier 2, not Tier 1:** cost and the fetch ceiling are live, recurring constraints — the 2026-08-03 run fetched 199 bookmarks against an observed ~300/run ceiling — so it outranks content polish. It is deliberately *not* Tier 1 because the leading candidate mechanism (cookie/GraphQL session replay) inverts the roadmap's safety-first ordering: it would introduce full-account session cookies while `#14` still leaves tokens in plaintext. Sequencing `#14` before `#17` resolves that inversion rather than averaging it away.
+- **`#17` is goal-scoped, not means-scoped.** The roadmap commits to removing the paid tier from the critical path; it does **not** commit to cookie/GraphQL as the mechanism. `feasibility-graphql-vs-x-api.md` recommends against that mechanism as the primary path, and that recommendation stands until a candidate clears the cost / ToS / blast-radius bar.
+
+#### `#17` candidate log
+
+| Date | Candidate | Verdict | Reason |
+|------|-----------|---------|--------|
+| 2026-06-12 | Cookie/GraphQL via vendored `bird` | Rejected as primary | Account-ban risk; `auth_token` ≈ full-account blast radius. Opt-in fallback only, if ever |
+| 2026-08-03 | [`Panniantong/Agent-Reach`](feasibility-agent-reach.md) | Not the right unit | Contains no bookmark code itself; it is an installer/router. Assessment redirected to its X delegate, below |
+| 2026-08-03 | [`public-clis/twitter-cli`](feasibility-agent-reach.md) (Agent-Reach's delegate) | **Rejected on risk, not capability** | **Clears the capability bar outright** — free, Apache-2.0, Python, reads own bookmarks + folders + create/delete, cursor-paginated, dynamic queryIds. Declined because it ships an explicit anti-detection stack: TLS fingerprint impersonation, `x-client-transaction-id` forgery, timing jitter documented as evading pattern detection, and full browser-cookie forwarding |
+| 2026-08-03 | [`rohunvora/x-research-skill`](feasibility-x-research-skill.md) | Rejected | Wrapper over the **paid** official API (~$0.50/search) — wrong cost direction; bookmarks command was added and reverted 116s later, absent at `HEAD` |
+
+**Status as of 2026-08-03: blocked on a risk decision, not on further research.**
+
+`#17` was deliberately written goal-scoped so a safer third mechanism could be adopted if one existed. The 2026-08-03 sweep establishes that none does:
+
+- The **free** mechanisms are fully capable and all converge on the same cookie/GraphQL substrate, now with active anti-detection.
+- The **sanctioned** mechanisms cost money.
+
+A capable free mechanism therefore exists today and could be integrated in days. The blocker is not engineering and not discovery — it is whether driving the user's real, named X account through a tool engineered to evade platform detection is an acceptable trade for removing API cost. **That is a user decision, and until it is made `#17` should not be picked up.** If the answer is ever yes, `feasibility-agent-reach.md` §5.2 and §5.4 define the required shape: explicit paste-in credentials only, never a browser-jar scan, opt-in behind a flag, OAuth remaining default.
