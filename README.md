@@ -46,6 +46,18 @@ Both are **required**, not optional. This is a safety mechanism: when they are a
 
 If you keep secrets in [`pass`](https://www.passwordstore.org/), store them as `x/auth-token` and `x/ct0` and skip the exports - any of `ANTHROPIC_API_KEY`, `TWITTER_AUTH_TOKEN`, and `TWITTER_CT0` that is absent from the environment is read from the vault at startup (`ai/anthropic/api-key` for the API key). A vault entry that exists but cannot be decrypted fails with the reason rather than being reported as an unset variable, so unlock your GPG agent first if the run reports a timeout.
 
+### Never export cookies by hand again
+
+If you browse X in Firefox, skip the DevTools step entirely:
+
+```bash
+uv run x-bookmarks-refresh-cookies
+```
+
+This reads the live `auth_token` and `ct0` from your Firefox profile and writes both into `pass`. It also runs automatically: when a fetch fails, the tool re-reads the pair from Firefox and retries once, but only if the cookies actually changed. A stale session therefore heals itself, and X's periodic rotation stops being something you have to notice.
+
+Set `X_BOOKMARKS_FIREFOX_PROFILE` to a profile directory if auto-detection picks the wrong one (it prefers `*.default-release`). The read is deliberately narrow: two named cookies, `x.com` and `twitter.com` hosts only, from one profile, on an explicit action or a failed fetch. That scope is what separates it from the unannounced multi-browser cookie-jar scan the credential requirement exists to prevent.
+
 <details>
 <summary>Using the official OAuth path instead (optional)</summary>
 

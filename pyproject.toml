@@ -15,6 +15,7 @@ dependencies = [
 x-bookmarks = "src.main:main"
 x-bookmarks-auth = "src.auth_helper:main"
 x-bookmarks-migrate = "src.migrate:main"
+x-bookmarks-refresh-cookies = "src.cookie_refresh:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

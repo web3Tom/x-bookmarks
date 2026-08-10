@@ -18,6 +18,7 @@ from src.api_client import (
 )
 from src.categorizer import categorize_tweets
 from src.config import load_config
+from src.cookie_refresh import CookieRefreshError, refresh_cookies
 from src.enrichment import backfill_titles
 from src.markdown_writer import read_existing_ids, write_bookmarks
 from src.removal import (
@@ -431,8 +432,44 @@ def _fetch_tweets(
     try:
         return fetch_bookmarks_unofficial(max_count=limit, env=os.environ)
     except UnofficialFetchError as exc:
+        retried = _retry_with_refreshed_cookies(run_id, limit, exc)
+        if retried is not None:
+            return retried
         print(f"[{run_id}] Fetch failed: {exc}")
         sys.exit(1)
+
+
+def _retry_with_refreshed_cookies(run_id: str, limit: int, failure: Exception):
+    """Re-read the X session from Firefox and retry the fetch once.
+
+    Every fetch failure triggers a refresh attempt rather than only the ones that
+    look like auth errors: `twitter-cli` has no error contract to classify
+    against, and guessing from stderr text is what the delete path already had to
+    do. The retry is gated on the cookies having actually changed instead, which
+    is deterministic - identical cookies cannot produce a different result, so
+    nothing is retried pointlessly.
+
+    Returns None when no retry was warranted or the retry also failed, leaving
+    the caller to report the original failure.
+    """
+    before = (os.environ.get("TWITTER_AUTH_TOKEN"), os.environ.get("TWITTER_CT0"))
+    try:
+        refresh_cookies(os.environ)
+    except CookieRefreshError as refresh_failure:
+        print(f"[{run_id}] Cookie refresh unavailable: {refresh_failure}")
+        return None
+
+    if (os.environ.get("TWITTER_AUTH_TOKEN"), os.environ.get("TWITTER_CT0")) == before:
+        print(f"[{run_id}] Firefox holds the same session, so this is not a stale cookie.")
+        return None
+
+    print(f"[{run_id}] Session cookies were stale. Refreshed from Firefox, retrying...")
+    try:
+        return fetch_bookmarks_unofficial(max_count=limit, env=os.environ)
+    except UnofficialFetchError as retry_failure:
+        print(f"[{run_id}] Retry after refresh also failed: {retry_failure}")
+        print(f"[{run_id}] Original failure: {failure}")
+        return None
 
 
 def _run_sync(
