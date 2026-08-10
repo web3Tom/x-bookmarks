@@ -2,6 +2,18 @@ import pytest
 from pathlib import Path
 
 
+@pytest.fixture(autouse=True)
+def no_real_pass_lookups(monkeypatch):
+    """Never shell out to the developer's real `pass` vault from a test.
+
+    `load_config` now fills absent credentials from `pass`, and the twitter-cli
+    cookies are absent in almost every test. Without this stub the suite would
+    raise a pinentry prompt, or stall for the lookup timeout, on every test that
+    builds a Config. Tests that exercise the vault path override this.
+    """
+    monkeypatch.setattr("src.config._resolve_from_pass", lambda entry: "")
+
+
 @pytest.fixture
 def sample_tweet_data():
     """Raw API response data for a single tweet."""

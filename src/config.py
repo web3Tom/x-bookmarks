@@ -7,7 +7,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 
 logger = logging.getLogger(__name__)
 
@@ -20,29 +20,101 @@ _OFFICIAL_REQUIRED = ("CLIENT_ID", "ACCESS_TOKEN", "REFRESH_TOKEN", "USER_ID")
 _OUTPUT_DIR_ENV = "KNOWLEDGE_BASE_DIR"
 _LEGACY_OUTPUT_DIR_ENV = "KNOWLEDGE_DIR"
 _TAXONOMY_FILE_ENV = "X_BOOKMARKS_TAXONOMY_FILE"
-_PASS_KEY_PATH = "ai/anthropic/api-key"
 _LOCAL_ENVRC_FILENAME = ".envrc.local"
 
+# Secrets this tool will look up in the user's `pass` vault, in the order they
+# are tried. The twitter-cli cookies belong here for the same reason the API key
+# does: `.envrc.local` documents them as `$(pass ...)` substitutions, and only
+# direnv can evaluate those. Without a fallback, the default retrieval path has
+# no credential route at all on a machine without direnv.
+_PASS_ENTRIES = {
+    "ANTHROPIC_API_KEY": "ai/anthropic/api-key",
+    "TWITTER_AUTH_TOKEN": "x/auth-token",
+    "TWITTER_CT0": "x/ct0",
+}
+_PASS_TIMEOUT_S = 10
 
-def _resolve_anthropic_key_from_pass() -> str:
-    """Fetch the Anthropic API key from the user's `pass` vault.
 
-    Used when `.env` overrides the shell-exported key with an empty value.
-    Returns "" if `pass` is unavailable or the entry is missing.
+class PassLookupError(RuntimeError):
+    """`pass` was reachable but the secret could not be read.
+
+    Distinct from "not configured": a locked GPG agent is an operator error with
+    a concrete fix, and reporting it as an absent variable sends the operator to
+    `.env`, which is not where the failure is.
+    """
+
+
+def _apply_dotenv(env_path: Path | None) -> None:
+    """Apply `.env` entries to the environment, ignoring blank values.
+
+    `load_dotenv(override=True)` treats `KEY=` as an instruction to unset, so the
+    placeholder line shipped in `.env` silently erased a key exported into the
+    shell. A blank entry means "not configured in this file", never "clear it".
+    Populated entries keep their previous precedence over the environment.
+    """
+    values = dotenv_values() if env_path is None else dotenv_values(env_path)
+    for key, value in values.items():
+        if value and value.strip():
+            os.environ[key] = value
+
+
+def _resolve_from_pass(entry: str) -> str:
+    """Fetch one secret from the user's `pass` vault.
+
+    Returns "" when `pass` is absent or the entry does not exist, both of which
+    mean "not configured here" and must stay quiet so other sources can be tried.
+
+    Raises:
+        PassLookupError: the lookup started but could not complete, which in
+            practice means the GPG agent holds no cached passphrase and pinentry
+            cannot prompt on a non-interactive shell.
     """
     if shutil.which("pass") is None:
         return ""
     try:
         result = subprocess.run(
-            ["pass", _PASS_KEY_PATH],
+            ["pass", entry],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=_PASS_TIMEOUT_S,
             check=True,
         )
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+    except subprocess.CalledProcessError:
         return ""
+    except subprocess.TimeoutExpired as exc:
+        raise PassLookupError(
+            f"`pass {entry}` timed out after {_PASS_TIMEOUT_S}s. The GPG agent "
+            "has no cached passphrase and pinentry cannot prompt here. Run "
+            f"`pass {entry}` once in an interactive terminal to unlock the "
+            "agent, or export the variable directly."
+        ) from exc
     return result.stdout.strip()
+
+
+def _fill_from_pass() -> dict[str, str]:
+    """Populate absent credentials from `pass`; return per-variable failures.
+
+    Failures are returned rather than raised so a locked `x/ct0` cannot abort an
+    `--official` run that never touches the twitter-cli path. The caller decides
+    which failures are fatal.
+    """
+    failures: dict[str, str] = {}
+    for name, entry in _PASS_ENTRIES.items():
+        if os.environ.get(name):
+            continue
+        if failures:
+            # One timeout proves the agent cannot unlock right now. Retrying the
+            # remaining entries would multiply the stall by the secret count.
+            continue
+        try:
+            value = _resolve_from_pass(entry)
+        except PassLookupError as exc:
+            logger.warning("%s", exc)
+            failures[name] = str(exc)
+            continue
+        if value:
+            os.environ[name] = value
+    return failures
 
 
 def _read_local_envrc_value(key: str, envrc_path: Path) -> str:
@@ -132,21 +204,21 @@ class Config:
 
 def load_config(env_path: Path | None = None) -> Config:
     """Load configuration from environment variables (and optional .env file)."""
-    if env_path is not None:
-        load_dotenv(env_path, override=True)
-        env_dir = env_path.parent
-    else:
-        load_dotenv(override=True)
-        env_dir = Path.cwd()
+    _apply_dotenv(env_path)
+    env_dir = env_path.parent if env_path is not None else Path.cwd()
 
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        key = _resolve_anthropic_key_from_pass()
-        if key:
-            os.environ["ANTHROPIC_API_KEY"] = key
+    pass_failures = _fill_from_pass()
 
     missing = [key for key in _REQUIRED if not os.environ.get(key)]
     if missing:
-        raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
+        detail = "".join(
+            f"\n  {name}: {pass_failures[name]}"
+            for name in missing
+            if name in pass_failures
+        )
+        raise ValueError(
+            f"Missing required environment variables: {', '.join(missing)}{detail}"
+        )
 
     return Config(
         client_id=os.environ.get("CLIENT_ID") or "",

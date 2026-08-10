@@ -44,6 +44,8 @@ export TWITTER_CT0='...'
 
 Both are **required**, not optional. This is a safety mechanism: when they are absent, `twitter-cli` scans your Chrome/Edge cookie jars to find them. Refusing to run without both is what prevents that unconsented scan.
 
+If you keep secrets in [`pass`](https://www.passwordstore.org/), store them as `x/auth-token` and `x/ct0` and skip the exports - any of `ANTHROPIC_API_KEY`, `TWITTER_AUTH_TOKEN`, and `TWITTER_CT0` that is absent from the environment is read from the vault at startup (`ai/anthropic/api-key` for the API key). A vault entry that exists but cannot be decrypted fails with the reason rather than being reported as an unset variable, so unlock your GPG agent first if the run reports a timeout.
+
 <details>
 <summary>Using the official OAuth path instead (optional)</summary>
 

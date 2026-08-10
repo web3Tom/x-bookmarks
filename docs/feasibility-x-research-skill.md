@@ -159,7 +159,7 @@ Its recommendations: set the token as a system env var **rather than inline in c
 
 This is not a defect in x-research-skill — it is a property of running any credentialed tool inside an agent session, and `x-bookmarks` is run exactly that way.
 
-**Relevance to us:** our secrets already avoid the worst form of this. `ANTHROPIC_API_KEY` is resolved from `pass` at runtime (`config.py:_resolve_anthropic_key_from_pass`) and `.env` deliberately holds an empty value, so the key is never an inline argument. X tokens live in `.env`, not in command lines.
+**Relevance to us:** our secrets already avoid the worst form of this. `ANTHROPIC_API_KEY` and the twitter-cli session cookies are resolved from `pass` at runtime (`config.py:_resolve_from_pass`) and `.env` deliberately holds empty values, so the secrets are never inline arguments. X tokens live in `pass` or the environment, not in command lines.
 
 **Worth adopting:** the explicit `## Security` section itself. Our `README.md` has security notes, but does not warn that running `x-bookmarks` inside an agent session can surface credentials in transcripts. That warning costs nothing and is accurate.
 
