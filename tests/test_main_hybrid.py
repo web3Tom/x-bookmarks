@@ -16,7 +16,8 @@ import pytest
 
 from src.config import Config
 from src.main import _build_deleter, _parse_args, main
-from src.models import CategorizedTweet, Tweet
+from dataclasses import replace
+from src.models import CategorizedTweet, ExternalLink, Tweet
 from src.unofficial_client import (
     AUTH_TOKEN_ENV,
     CT0_ENV,
@@ -179,3 +180,98 @@ class TestOfficialCredentialGuard:
         assert _config(
             client_id="c", access_token="a"
         ).has_official_credentials is False
+
+
+class TestLinkOnlyArticleBackfill:
+    """A link-only bookmark must reach the categorizer with article text.
+
+    Before this, a tweet whose entire text was a t.co shortlink was handed to
+    Claude bare, which produced notes titled "Shared Link - No Substantive
+    Content" holding nothing but the link. The unit tests cover the fetch
+    itself; these pin that main() actually invokes it, and that a bookmark with
+    real prose still never leaves the machine.
+    """
+
+    def _link_only_tweet(self):
+        return Tweet(
+            id="1", text="https://t.co/abc", author_id="2",
+            created_at=datetime(2026, 8, 4, tzinfo=timezone.utc), author=None,
+            public_metrics={}, media=(),
+            external_links=(
+                ExternalLink(
+                    url="https://t.co/abc",
+                    expanded_url="https://example.com/post",
+                    display_url="example.com/post",
+                    title=None,
+                ),
+            ),
+            note_tweet_text=None, article_url=None,
+        )
+
+    @patch("src.main.write_bookmarks")
+    @patch("src.main.categorize_tweets")
+    @patch("src.main.read_existing_ids")
+    @patch("src.main.fetch_bookmarks_unofficial")
+    @patch("src.main.load_config")
+    def test_link_only_bookmark_is_categorized_with_article_text(
+        self, mock_config, mock_unofficial, mock_existing,
+        mock_categorize, mock_write, tmp_path, monkeypatch, capsys,
+    ):
+        mock_config.return_value = _config(output_dir=tmp_path)
+        mock_existing.return_value = set()
+        tweet = self._link_only_tweet()
+        mock_unofficial.return_value = (tweet,)
+        monkeypatch.setattr(
+            "src.enrichment.fetch_page",
+            lambda url: "Title: Real Title\n\nMarkdown Content:\nThe article body.",
+        )
+        mock_categorize.return_value = (
+            (CategorizedTweet(tweet=tweet, pillar="Applied Practice", title="T"),),
+            {"input_tokens": 10, "output_tokens": 5},
+        )
+        mock_write.return_value = {
+            "files_written": 1, "duplicates_skipped": 0,
+            "filenames": ["t.md"], "failed": [],
+        }
+
+        main([])
+
+        sent = mock_categorize.call_args[0][0]
+        assert sent[0].article_content == "The article body."
+        assert sent[0].article_title == "Real Title"
+        assert "recovered article content" in capsys.readouterr().out
+
+    @patch("src.main.write_bookmarks")
+    @patch("src.main.categorize_tweets")
+    @patch("src.main.read_existing_ids")
+    @patch("src.main.fetch_bookmarks_unofficial")
+    @patch("src.main.load_config")
+    def test_substantive_bookmark_triggers_no_fetch(
+        self, mock_config, mock_unofficial, mock_existing,
+        mock_categorize, mock_write, tmp_path, monkeypatch,
+    ):
+        """Privacy boundary: a tweet with real prose discloses no URL."""
+        mock_config.return_value = _config(output_dir=tmp_path)
+        mock_existing.return_value = set()
+        tweet = replace(
+            self._link_only_tweet(),
+            text="A detailed argument about how agent harnesses should work",
+        )
+        mock_unofficial.return_value = (tweet,)
+        calls = []
+        monkeypatch.setattr(
+            "src.enrichment.fetch_page",
+            lambda url: calls.append(url) or "Markdown Content:\nbody",
+        )
+        mock_categorize.return_value = (
+            (CategorizedTweet(tweet=tweet, pillar="Applied Practice", title="T"),),
+            {"input_tokens": 10, "output_tokens": 5},
+        )
+        mock_write.return_value = {
+            "files_written": 1, "duplicates_skipped": 0,
+            "filenames": ["t.md"], "failed": [],
+        }
+
+        main([])
+
+        assert calls == [], "a bookmark with its own text must not be fetched"

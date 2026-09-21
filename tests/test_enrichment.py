@@ -183,3 +183,166 @@ class TestFetchPage:
         joined = " ".join(f"{k}:{v}" for k, v in captured["headers"].items())
         assert "Authorization" not in joined and "Cookie" not in joined
         assert extract_title(body) == "Live"
+
+
+# --- Article-body backfill -------------------------------------------------
+#
+# A link-only bookmark (a tweet whose whole text is a t.co URL) used to produce
+# a note titled "Shared Link - No Substantive Content": Claude was handed a
+# bare shortlink and had nothing to categorize from. These tests pin the fix —
+# harvesting the article body from the SAME Jina response that already yields
+# the title — and pin the boundary that keeps it cheap and private: a tweet
+# that says something of its own is never fetched.
+
+from src.enrichment import (  # noqa: E402
+    backfill_articles,
+    extract_body,
+    has_substantive_text,
+)
+
+
+def _tweet_with(text, links=(), article_content=None, tweet_id="1"):
+    return Tweet(
+        id=tweet_id,
+        text=text,
+        author_id="2",
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        author=None,
+        public_metrics={},
+        media=(),
+        external_links=tuple(links),
+        note_tweet_text=None,
+        article_url=None,
+        article_content=article_content,
+    )
+
+
+_PAGE = (
+    "Title: Real Article Title\n"
+    "URL Source: https://example.com/a\n"
+    "\n"
+    "Markdown Content:\n"
+    "The actual body of the article.\n"
+    "\n"
+    "Second paragraph.\n"
+)
+
+
+class TestExtractBody:
+    def test_returns_content_after_marker(self):
+        assert extract_body(_PAGE) == (
+            "The actual body of the article.\n\nSecond paragraph."
+        )
+
+    def test_header_is_excluded(self):
+        """The Title:/URL Source: header is metadata, not article prose."""
+        body = extract_body(_PAGE)
+        assert "URL Source:" not in body and "Title:" not in body
+
+    def test_missing_marker_returns_none(self):
+        assert extract_body("Title: x\n\nno marker here") is None
+
+    def test_whitespace_only_body_returns_none(self):
+        """An empty body must not displace the placeholder with a blank note."""
+        assert extract_body("Markdown Content:\n   \n\n") is None
+
+
+class TestHasSubstantiveText:
+    def test_prose_is_substantive(self):
+        assert has_substantive_text(_tweet_with("Here is a real thought about agents"))
+
+    def test_bare_shortlink_is_not(self):
+        """The exact shape that produced the placeholder notes."""
+        assert not has_substantive_text(
+            _tweet_with("https://t.co/CCMCHMgGYk() https://t.co/RXRExsPeiS")
+        )
+
+    def test_empty_text_is_not(self):
+        assert not has_substantive_text(_tweet_with("   "))
+
+    def test_any_url_stripped_not_just_tco(self):
+        assert not has_substantive_text(_tweet_with("https://example.com/some/deep/path"))
+
+    def test_short_lead_in_before_link_is_not_substantive(self):
+        """'this 👇' plus a link is not something Claude can categorize."""
+        assert not has_substantive_text(_tweet_with("this 👇 https://t.co/abc"))
+
+    def test_prose_with_trailing_link_is_substantive(self):
+        assert has_substantive_text(
+            _tweet_with("A careful walkthrough of agent memory design https://t.co/abc")
+        )
+
+
+class TestBackfillArticles:
+    def test_fills_content_and_title_for_link_only_tweet(self):
+        tweet = _tweet_with("https://t.co/abc", links=[_link("https://example.com/a")])
+        (out,) = backfill_articles([tweet], fetcher=lambda _: _PAGE)
+        assert out.article_content == (
+            "The actual body of the article.\n\nSecond paragraph."
+        )
+        assert out.article_title == "Real Article Title"
+
+    def test_substantive_tweet_is_never_fetched(self):
+        """Privacy + cost boundary: only otherwise-empty notes disclose a URL."""
+        calls = []
+
+        def spy(url):
+            calls.append(url)
+            return _PAGE
+
+        tweet = _tweet_with(
+            "A real opinion about harness design", links=[_link("https://example.com/a")]
+        )
+        (out,) = backfill_articles([tweet], fetcher=spy)
+        assert calls == []
+        assert out.article_content is None
+
+    def test_tweet_without_links_is_not_fetched(self):
+        calls = []
+        tweet = _tweet_with("https://t.co/abc")
+        (out,) = backfill_articles([tweet], fetcher=lambda u: calls.append(u) or _PAGE)
+        assert calls == []
+        assert out.article_content is None
+
+    def test_existing_article_content_is_preserved(self):
+        """The official API's own article text wins; never refetch over it."""
+        calls = []
+        tweet = _tweet_with(
+            "https://t.co/abc",
+            links=[_link("https://example.com/a")],
+            article_content="from the API",
+        )
+        (out,) = backfill_articles([tweet], fetcher=lambda u: calls.append(u) or _PAGE)
+        assert calls == []
+        assert out.article_content == "from the API"
+
+    def test_fetch_failure_leaves_tweet_unchanged(self):
+        """A dead link must not abort a run that is otherwise producing notes."""
+        def boom(_):
+            raise RuntimeError("network down")
+
+        tweet = _tweet_with("https://t.co/abc", links=[_link("https://example.com/a")])
+        (out,) = backfill_articles([tweet], fetcher=boom)
+        assert out.article_content is None
+        assert out.id == "1"
+
+    def test_input_tweets_are_not_mutated(self):
+        tweet = _tweet_with("https://t.co/abc", links=[_link("https://example.com/a")])
+        backfill_articles([tweet], fetcher=lambda _: _PAGE)
+        assert tweet.article_content is None
+
+    def test_repeated_url_fetched_once(self):
+        calls = []
+
+        def spy(url):
+            calls.append(url)
+            return _PAGE
+
+        link = _link("https://example.com/a")
+        tweets = [
+            _tweet_with("https://t.co/abc", links=[link], tweet_id="1"),
+            _tweet_with("https://t.co/def", links=[link], tweet_id="2"),
+        ]
+        out = backfill_articles(tweets, fetcher=spy)
+        assert len(calls) == 1
+        assert all(t.article_content for t in out)

@@ -115,6 +115,9 @@ def _build_system_prompt(
         "- Generate a title (max 80 chars) for each bookmark.\n"
         "- For articles: prefer the article's actual title or topic.\n"
         "- For posts: summarize the key insight or topic (do not just truncate the tweet).\n"
+        "- If `text` is only a link, use `article_title` as the basis for the title "
+        "and for categorization. Never emit a placeholder such as "
+        "'Shared Link' or 'No Substantive Content'.\n"
         "- Title must be YAML-safe: no colons, no quotes, no newlines, no brackets.\n\n"
         "Return ONLY a JSON array, no other text.\n\n"
         "Response format:\n"
@@ -144,6 +147,8 @@ def build_prompt_payload(tweets: tuple[Tweet, ...]) -> str:
             "text": tweet.display_text,
             "author": tweet.author.username if tweet.author else "unknown",
         }
+        if tweet.article_title:
+            entry["article_title"] = tweet.article_title
         if tweet.article_content:
             entry["article_excerpt"] = tweet.article_content[:2000]
         entries.append(entry)
@@ -158,6 +163,15 @@ def _sanitize_title(text: str) -> str:
     if len(title) > 80:
         title = title[:80] + "..."
     return title
+
+
+class CategorizationError(RuntimeError):
+    """Raised when Claude's reply cannot be parsed as a categorization array.
+
+    Distinct from JSONDecodeError so the caller can report which stage failed:
+    by this point the bookmarks have already been fetched, so an opaque parse
+    error looks like a fetch bug rather than a model-reply bug.
+    """
 
 
 def parse_categorization_response(
@@ -209,15 +223,34 @@ def categorize_tweets(
     client = anthropic.Anthropic(api_key=api_key)
     payload = build_prompt_payload(tweets)
 
-    response = client.messages.create(
-        model=_MODEL,
-        max_tokens=_MAX_TOKENS,
-        system=system_prompt,
-        messages=[{"role": "user", "content": payload}],
-    )
+    # One retry: an empty or truncated reply is transient, and by this point
+    # the bookmarks have already been fetched, so giving up costs the whole run.
+    last_error: Exception | None = None
+    response = None
+    response_map = None
+    for attempt in range(2):
+        response = client.messages.create(
+            model=_MODEL,
+            max_tokens=_MAX_TOKENS,
+            system=system_prompt,
+            messages=[{"role": "user", "content": payload}],
+        )
+        raw_text = response.content[0].text
+        try:
+            response_map = parse_categorization_response(raw_text)
+            break
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            last_error = exc
+            logger.warning(
+                "Categorization reply unparseable on attempt %d: %s", attempt + 1, exc
+            )
 
-    raw_text = response.content[0].text
-    response_map = parse_categorization_response(raw_text)
+    if response_map is None:
+        raise CategorizationError(
+            f"Claude returned an unparseable categorization reply for "
+            f"{len(tweets)} bookmark(s) after 2 attempts ({last_error}). "
+            "The bookmarks were fetched but no notes were written; re-run to retry."
+        ) from last_error
 
     usage = {
         "input_tokens": response.usage.input_tokens,

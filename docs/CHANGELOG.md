@@ -3,6 +3,21 @@
 Reverse-chronological log of session-level outcomes for this repository.
 Newest entry at the top. Long-form reasoning lives in the author's external spec system, not here.
 
+## 2026-09-21
+
+**Link-only bookmarks no longer produce empty notes**
+
+- A sync produced 8 notes titled "Shared Link - No Substantive Content", each holding nothing but a `t.co` link. Cause: a tweet whose entire text is a shortlink reaches the categorizer bare, so Claude has nothing to title or classify from.
+- `build_prompt_payload` now sends `article_title` alongside `text`. `unofficial_client` already parsed the field and nothing downstream consumed it — the signal was being fetched and discarded. For a link-only X Article bookmark it is the only signal present, and it is reliably descriptive ("The rise of the knowledge engineer"). Added a prompt rule to use it and never emit a placeholder title.
+- Added `backfill_articles` to `src/enrichment.py`: harvests the `Markdown Content:` body from the same Jina Reader response that already yielded the title, for link-only bookmarks pointing off X. Automatic rather than flagged, but scoped to tweets with no substantive text of their own — a bookmark that says something in its own words never leaves the machine. Supporting `extract_body` and `has_substantive_text`.
+- `article_url` is now recorded whenever the tweet carries one, independently of `type`. It had been gated on `type: "article"`, which requires article content, which `twitter-cli` never supplies — so every X Article bookmarked on the default path silently lost its URL and kept only the `t.co` redirect. Updated `test_article_url_omitted_when_not_article_type`, which encoded that behavior as intended.
+- `CategorizationError` with one retry replaces a bare `json.JSONDecodeError`. An empty Claude reply killed a live run *after* the bookmarks had been fetched, with a traceback that pointed at JSON parsing rather than the model reply. `main` now exits cleanly and records an `error` history entry.
+- Late-bound both enrichment fetchers. `fetcher: Callable = fetch_page` binds the default at import time, silently defeating monkeypatching; an integration test written in this session really did fetch `example.com` over the network before this was caught.
+- **X Article bodies are unobtainable on the free path**, verified rather than assumed: `articleText` was present in 0 of 200 live bookmarks, and Jina Reader returns `403 AbuseAlleviationError` for `x.com`. Those notes get accurate frontmatter and a working `article_url`, but their body shows only the shortlink. Roadmap `#3` marked partially complete with that half closed as infeasible; corrected the v1 claim of "X Article detection and content extraction", which was true only via `--official`.
+- Regenerated all 8 affected notes; 0 placeholders remain in the vault.
+- Docs: new Link-Only Bookmarks section in `README.md`, new Link Enrichment component in `docs/overview.md` (the module was undocumented entirely), frontmatter contract corrected in `AGENTS.md`, v1.8 section in `docs/roadmap.md`.
+- Tests: full suite 545 passing at 90% coverage.
+
 ## 2026-06-07
 
 **Warn when the output directory does not exist**

@@ -10,7 +10,7 @@
 - [x] Obsidian Markdown generation with frontmatter
 - [x] Deduplication at write time by `tweet_id`
 - [x] Long-form tweet (`note_tweet`) support
-- [x] X Article detection and content extraction
+- [x] X Article detection and content extraction — **detection only in practice on the default path.** `twitter-cli` does not return `articleText` (0 of 200 in a live sample), so article *content* arrives solely via `--official`. See v1.8
 
 ### v1.1 — Efficiency & Configuration
 - [x] Early deduplication — filter already-saved bookmarks **before** Claude API call to avoid wasting credits
@@ -77,6 +77,27 @@ Recorded rather than glossed, since these are now the tool's normal operating co
 
 The delete-semantics regression is the sharpest edge. Anything not positively matched as "already absent" raises rather than reporting success, because a false success would archive the note while the bookmark still exists on X. Use `--official` for removal when that distinction matters.
 
+### v1.8 — Link-Only Bookmark Recovery
+
+- [x] **Article title reaches the categorizer** — `build_prompt_payload` now sends `article_title` alongside `text`. A link-only X Article bookmark carries no other signal, and without it Claude emitted notes titled "Shared Link - No Substantive Content"
+- [x] **[#3, partial] Article body for link-only bookmarks** — `backfill_articles` in `src/enrichment.py` harvests the `Markdown Content:` body from the same Jina response that already yielded the title. Automatic rather than flagged, but scoped to bookmarks with no substantive text of their own
+- [x] **`article_url` no longer gated on article text** — it was emitted only for `type: "article"`, which requires article content, which `twitter-cli` never supplies. Every X Article bookmarked on the default path silently lost its URL and kept only a `t.co` redirect
+- [x] **Categorization failures are survivable** — an unparseable Claude reply is retried once, then raises `CategorizationError` naming the stage. Previously a bare `json.JSONDecodeError` killed the run after the bookmarks had already been fetched
+- [x] **Enrichment fetchers late-bound** — `fetcher: Callable = fetch_page` bound the default at import time, silently defeating monkeypatching. A test in this work really did fetch `example.com` over the network before this was found
+
+#### Why the X Article half of `#3` is closed as infeasible
+
+Two independent blocks, both verified live rather than assumed:
+
+| Source | Result |
+|---|---|
+| `twitter-cli` `articleText` | Present in **0 of 200** bookmarks. The field is parsed by `unofficial_client.py` but never populated |
+| Jina Reader on `x.com/i/article/...` | `403 AbuseAlleviationError` — anonymous access to `x.com` is blocked outright |
+
+So an X Article's prose is unreachable on the free path. What *is* reachable is its title, which `twitter-cli` returns reliably and descriptively ("The rise of the knowledge engineer"), and its URL. Notes for X Articles therefore carry accurate frontmatter and a working `article_url`, with a body showing only the shortlink. Closing the gap would require an authenticated X Article fetch, which reuses the `auth_token` already accepted in v1.7 but is a separate piece of work.
+
+This also revises the v1.6 note that `#3` "should reuse whichever mechanism `#16` settles on". It does, for external links. For X Articles no mechanism exists at this privilege level.
+
 ## Planned
 
 Items are grouped into execution tiers in priority order. Each links to the corresponding GitHub issue in [`docs/github-issues.md`](github-issues.md). Priority reflects safety-first sequencing: credential hardening and dev-safety scaffolding precede content features.
@@ -92,11 +113,13 @@ Items are grouped into execution tiers in priority order. Each links to the corr
 - [ ] **[#2] Configurable bookmark cap** — expose `_MAX_BOOKMARKS` (currently hardcoded at 800) via CLI flag or env var
 
 ### Tier 3 — Content Quality
-- [ ] **[#3] Article extraction for external links** — fetch and clean article body for non-X URLs. Originally scoped to `defuddle`; reconsider against Jina Reader, which `#16` now uses in production (see v1.6)
+- [~] **[#3] Article extraction for external links** — **partially done in v1.8** via Jina Reader, scoped to link-only bookmarks. Remaining: extraction for bookmarks that already have their own text, which is a quality improvement rather than an empty-note fix. The X Article half of this item is **closed as infeasible** — see v1.8
 - [ ] **[#4] Thread unrolling** — detect tweet threads and stitch related posts into a single coherent note
 - [ ] **[#5] Quote tweet expansion** — inline quoted tweet content into the parent note
 
 > `#16` moved to **Completed (v1.6)**, implemented via Jina Reader rather than `defuddle`. See the v1.6 section for the mechanism rationale and its trade-off.
+>
+> `#3` is partially complete as of **v1.8**: external link-only bookmarks are extracted; X Articles are closed as infeasible on the free path. See the v1.8 section.
 
 ### Tier 4 — UX & Automation
 - [ ] **[#11] Verbose and quiet CLI modes** — control output verbosity for debugging vs automation contexts

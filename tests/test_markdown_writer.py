@@ -1,5 +1,6 @@
 import pytest
-from datetime import datetime
+from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
@@ -426,13 +427,31 @@ class TestBuildFrontmatter:
         assert 'type: "article"' in fm
         assert 'article_url: "https://example.com/article"' in fm
 
-    def test_article_url_omitted_when_not_article_type(self):
-        """When bookmark_type is 'post' even if tweet has article_url, it should not appear."""
+    def test_article_url_recorded_even_for_post_type(self):
+        """article_url no longer depends on bookmark_type.
+
+        It used to be emitted only for type "article", which requires article
+        text — and `twitter-cli` never returns article text, so every X Article
+        bookmarked through that path silently lost its URL and kept only an
+        opaque t.co link. The URL is the route back to the source, so it is
+        recorded whenever the tweet carries one.
+        """
         tweet = _make_tweet(
             id="789",
             username="charlie",
             article_url="https://example.com/article",
         )
+        fm = _build_frontmatter(
+            tweet,
+            pillar="Applied Practice",
+            bookmark_type="post",
+            title="Just a post",
+        )
+        assert 'article_url: "https://example.com/article"' in fm
+
+    def test_article_url_omitted_when_tweet_has_none(self):
+        """Absence is still absence — no empty field on an ordinary post."""
+        tweet = _make_tweet(id="790", username="charlie")
         fm = _build_frontmatter(
             tweet,
             pillar="Applied Practice",
@@ -819,3 +838,40 @@ class TestWriteBookmarks:
 
         content = list(tmp_output_dir.glob("*.md"))[0].read_text()
         assert "  - uncategorized" in content
+
+
+class TestArticleUrlAlwaysRecorded:
+    """An X Article's URL must survive even when its text cannot be fetched.
+
+    `twitter-cli` never returns `articleText`, so these notes have no body. The
+    frontmatter `article_url` is then the only way back to the source — without
+    it the note points at an opaque t.co shortlink and the article is
+    effectively lost.
+    """
+
+    def _article_tweet(self):
+        return Tweet(
+            id="1", text="https://t.co/abc", author_id="2",
+            created_at=datetime(2026, 9, 17, tzinfo=timezone.utc), author=None,
+            public_metrics={}, media=(), external_links=(),
+            note_tweet_text=None,
+            article_url="https://x.com/i/article/999",
+            article_content=None,
+            article_title="The Rise of the Knowledge Engineer",
+        )
+
+    def test_article_url_present_without_content(self, tmp_path):
+        ct = CategorizedTweet(
+            tweet=self._article_tweet(), pillar="Applied Practice",
+            title="The Rise of the Knowledge Engineer",
+        )
+        write_bookmarks((ct,), tmp_path)
+        text = next(tmp_path.glob("*.md")).read_text()
+        assert 'article_url: "https://x.com/i/article/999"' in text
+
+    def test_non_article_note_has_no_article_url(self, tmp_path):
+        tweet = replace(self._article_tweet(), article_url=None, article_title=None)
+        ct = CategorizedTweet(tweet=tweet, pillar="Applied Practice", title="Plain")
+        write_bookmarks((ct,), tmp_path)
+        text = next(tmp_path.glob("*.md")).read_text()
+        assert "article_url:" not in text

@@ -16,10 +16,14 @@ from src.api_client import (
     delete_bookmark,
     fetch_bookmarks,
 )
-from src.categorizer import categorize_tweets
+from src.categorizer import CategorizationError, categorize_tweets
 from src.config import load_config
 from src.cookie_refresh import CookieRefreshError, refresh_cookies
-from src.enrichment import backfill_titles
+from src.enrichment import (
+    backfill_articles,
+    backfill_titles,
+    has_substantive_text,
+)
 from src.markdown_writer import read_existing_ids, write_bookmarks
 from src.removal import (
     backfill_synthesized_false,
@@ -546,6 +550,25 @@ def _run_sync(
             )
             print(f"[{run_id}] {filled} link title(s) now populated.")
 
+    link_only = tuple(
+        t for t in novel
+        if t.external_links and not t.article_content and not has_substantive_text(t)
+    )
+    if link_only:
+        print(
+            f"[{run_id}] {len(link_only)} link-only bookmark(s) carry no text of "
+            "their own; reading the linked pages via Jina Reader..."
+        )
+        link_only_ids = {t.id for t in link_only}
+        novel = backfill_articles(novel)
+        recovered = sum(
+            1 for t in novel if t.id in link_only_ids and t.article_content
+        )
+        print(
+            f"[{run_id}] {recovered} of {len(link_only)} link-only bookmark(s) "
+            "recovered article content."
+        )
+
     article_count = sum(1 for t in novel if t.article_url)
     if article_count:
         with_content = sum(1 for t in novel if t.article_content)
@@ -556,11 +579,24 @@ def _run_sync(
 
     print(f"[{run_id}] Categorizing {len(novel)} new bookmark(s) with Claude...")
 
-    categorized, usage = categorize_tweets(
-        novel,
-        api_key=config.anthropic_api_key,
-        override_file=config.taxonomy_file,
-    )
+    try:
+        categorized, usage = categorize_tweets(
+            novel,
+            api_key=config.anthropic_api_key,
+            override_file=config.taxonomy_file,
+        )
+    except CategorizationError as exc:
+        duration_ms = int((time.monotonic() - t_start) * 1000)
+        print(f"[{run_id}] {exc}")
+        record = _build_run_record(
+            run_id=run_id, status="error", started_at=started_at,
+            duration_ms=duration_ms, output_dir=str(config.output_dir),
+            fetched=len(tweets), skipped=skipped, novel=len(novel),
+            error=str(exc),
+        )
+        history_path = _append_history(config.output_dir, record)
+        print(f"[{run_id}] History appended to {history_path}")
+        sys.exit(1)
 
     print(f"[{run_id}] Writing to {config.output_dir}...")
     stats = write_bookmarks(categorized, config.output_dir)

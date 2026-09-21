@@ -184,6 +184,23 @@ Deletion uses `twitter-cli` by default. Add `--official` to delete through the O
 
 Live deletion is capped at 50 bookmarks per run. Use `--max N` to process fewer.
 
+## Link-Only Bookmarks
+
+A bookmark whose entire text is a shortlink carries no signal of its own.
+Categorizing it bare produced notes titled "Shared Link - No Substantive Content" holding nothing but the link.
+Two mechanisms now cover that case, and neither needs a flag.
+
+**X Articles.** When a tweet links to an X Article (`x.com/i/article/...`), the article's title travels with the bookmark and is passed to Claude alongside the tweet text.
+That is enough to produce a real title and an accurate pillar.
+The article `url` is also recorded in frontmatter as `article_url`, so the note links to the article itself rather than to an opaque `t.co` redirect.
+
+**External links.** When a link-only bookmark points somewhere other than X, the linked page is read through Jina Reader and its body is passed to Claude as an excerpt.
+This is scoped deliberately: a bookmark that says something in its own words is never fetched, so only bookmarks that would otherwise become empty notes disclose a URL.
+
+**Known limitation:** X Article *bodies* cannot be retrieved.
+`twitter-cli` does not return article text, and Jina Reader cannot read `x.com`.
+Notes for X Articles therefore carry accurate frontmatter and a working `article_url`, but their body shows only the original shortlink.
+
 ## Enriching Link Titles
 
 External link titles are frequently missing (always, on the default path, which emits bare URLs), which makes notes less readable and gives Claude less signal during categorization. Opt in to backfill those titles:
@@ -194,7 +211,11 @@ uv run x-bookmarks --enrich-titles
 
 Titles are fetched from [Jina Reader](https://r.jina.ai) with `GET https://r.jina.ai/{url}` — no API key, no account, no credential of any kind. Enrichment runs *after* deduplication, so only genuinely new bookmarks cost a request, and repeated URLs are fetched once per run. A failed or slow fetch leaves the title empty and never aborts the run.
 
-**Trade-off:** every enriched URL is disclosed to a third-party service. That is why this is opt-in rather than automatic. If your bookmarks include private or sensitive links, leave it off.
+**Trade-off:** every enriched URL is disclosed to a third-party service. That is why *title* enrichment is opt-in rather than automatic. If your bookmarks include private or sensitive links, leave it off.
+
+Note that the article-body read described under [Link-Only Bookmarks](#link-only-bookmarks) uses the same service without a flag.
+It is limited to bookmarks that have no text of their own, on the reasoning that a run silently emitting empty notes is the worse outcome.
+A bookmark that says something in its own words never leaves the machine.
 
 ## Retrieval Mechanism
 
