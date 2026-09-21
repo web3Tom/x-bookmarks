@@ -75,7 +75,7 @@ read: false
 synthesized: false
 type: "post" # or "article"
 tweet_url: "https://x.com/..."
-article_url: "https://..." # optional — articles only
+article_url: "https://..." # optional — present whenever the tweet links to an X Article
 ---
 ```
 
@@ -88,6 +88,10 @@ Rules:
 - deprecated fields (`category`, `subCategory`, legacy `tags`) must not be reintroduced
 - the first `##` heading in generated note bodies must match the frontmatter title exactly
 - use `## References` for outbound links
+- `article_url` is recorded whenever the tweet carries one, independently of `type`.
+  It is deliberately not gated on article text being available: `twitter-cli` never
+  returns article text, so gating the two together silently dropped the only route
+  back to the source and left the note holding an opaque `t.co` link.
 
 ## Faceted Categorization Schema
 

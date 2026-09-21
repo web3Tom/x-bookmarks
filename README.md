@@ -1,6 +1,6 @@
 # x-bookmarks
 
-Fetch your `x.com` bookmarks through the X API, classify them with Claude, and save them as structured Obsidian Markdown notes.
+Fetch your `x.com` bookmarks for free, classify them with Claude, and save them as structured Obsidian Markdown notes. No X developer account required.
 
 Project URL: `https://github.com/web3Tom/x-bookmarks`
 
@@ -8,11 +8,13 @@ Project URL: `https://github.com/web3Tom/x-bookmarks`
 
 This project is for developers who want to turn saved X posts and articles into a categorized knowledge base. To use it, you need:
 
-- an X developer app/project with bookmark access
 - Python 3.11+
 - `uv`
 - an Anthropic API key
 - an Obsidian vault or another target directory for the generated notes
+- `twitter-cli` (`pipx install twitter-cli`) and your X session cookies
+
+**No X developer account or API subscription is required.** By default the tool reads bookmarks through `twitter-cli`, which uses X's private GraphQL API with your session cookies rather than the paid developer platform. See [Retrieval mechanism](#retrieval-mechanism) for what that means and its risks. The official OAuth path is still available via `--official` if you have a developer app and prefer the sanctioned route.
 
 ## Quick Start
 
@@ -28,9 +30,38 @@ uv sync
 cp .env.example .env
 ```
 
-Add your `CLIENT_ID` first. The OAuth helper will fill in the access token, refresh token, and user ID.
+Only `ANTHROPIC_API_KEY` and `KNOWLEDGE_BASE_DIR` are needed for a default run. The X OAuth entries are optional and used only with `--official`.
 
-### 3. Authenticate with X
+### 3. Supply your X session cookies
+
+```bash
+pipx install twitter-cli
+
+# Export from x.com via DevTools > Application > Cookies, or the Cookie-Editor extension
+export TWITTER_AUTH_TOKEN='...'
+export TWITTER_CT0='...'
+```
+
+Both are **required**, not optional. This is a safety mechanism: when they are absent, `twitter-cli` scans your Chrome/Edge cookie jars to find them. Refusing to run without both is what prevents that unconsented scan.
+
+If you keep secrets in [`pass`](https://www.passwordstore.org/), store them as `x/auth-token` and `x/ct0` and skip the exports - any of `ANTHROPIC_API_KEY`, `TWITTER_AUTH_TOKEN`, and `TWITTER_CT0` that is absent from the environment is read from the vault at startup (`ai/anthropic/api-key` for the API key). A vault entry that exists but cannot be decrypted fails with the reason rather than being reported as an unset variable, so unlock your GPG agent first if the run reports a timeout.
+
+### Never export cookies by hand again
+
+If you browse X in Firefox, skip the DevTools step entirely:
+
+```bash
+uv run x-bookmarks-refresh-cookies
+```
+
+This reads the live `auth_token` and `ct0` from your Firefox profile and writes both into `pass`. It also runs automatically: when a fetch fails, the tool re-reads the pair from Firefox and retries once, but only if the cookies actually changed. A stale session therefore heals itself, and X's periodic rotation stops being something you have to notice.
+
+Set `X_BOOKMARKS_FIREFOX_PROFILE` to a profile directory if auto-detection picks the wrong one (it prefers `*.default-release`). The read is deliberately narrow: two named cookies, `x.com` and `twitter.com` hosts only, from one profile, on an explicit action or a failed fetch. That scope is what separates it from the unannounced multi-browser cookie-jar scan the credential requirement exists to prevent.
+
+<details>
+<summary>Using the official OAuth path instead (optional)</summary>
+
+If you have an X developer app and prefer the sanctioned API, run:
 
 ```bash
 uv run x-bookmarks-auth
@@ -38,6 +69,9 @@ uv run x-bookmarks-auth
 
 This opens a browser for OAuth 2.0 PKCE authorization and writes the returned credentials to `.env`.
 The requested X scopes include `bookmark.read` and `bookmark.write`; the write scope is only used by the explicit removal mode.
+Then pass `--official` on every run. This costs money and is subject to the ~300-per-run pagination ceiling.
+
+</details>
 
 ### 4. Add your Anthropic API key
 
@@ -77,8 +111,8 @@ uv run x-bookmarks
 
 ## Features
 
-- Fetches bookmarks from the X API with pagination (up to 100 per page, 800 max per run)
-- Refreshes expired access tokens automatically
+- Fetches bookmarks for free via `twitter-cli`, cursor-paginated with no ~300-per-run ceiling
+- Optional `--official` OAuth path with automatic token refresh
 - Deduplicates against previously saved notes before categorizing
 - Uses Claude to generate a title plus `pillar`, `mechanics`, and optional `entity_tags`
 - Writes Obsidian-friendly Markdown with Dataview-compatible frontmatter
@@ -89,9 +123,10 @@ uv run x-bookmarks
 
 ## Known Limitations
 
-- **X API pagination bug:** The bookmarks endpoint often stops returning pages after approximately 300 bookmarks (~3 pages), even when you have more saved. This is a known X API issue. Run the tool regularly so new bookmarks stay within the retrievable window.
+- **`--official` pagination ceiling:** On the official path the bookmarks endpoint often stops returning pages after approximately 300 bookmarks (~3 pages). This is a known X API issue and does not affect the default `twitter-cli` path, which is cursor-paginated.
 - **No fetch-time dedup:** All available pages are fetched before deduplication runs. There is no early-stop optimization that skips remaining pages when duplicates are found.
-- **API tier requirement:** Bookmark access requires at least the X API Basic tier. The Free tier does not support bookmarks.
+- **`--official` tier requirement:** The official path requires at least the X API Basic tier; the Free tier does not support bookmarks. The default path needs no developer account at all.
+- **Default path is unsanctioned:** It violates the X Developer Agreement and can get your account flagged. See [Retrieval mechanism](#retrieval-mechanism).
 
 ## Migration
 
@@ -145,9 +180,83 @@ Eligibility is strict: only active notes in `KNOWLEDGE_BASE_DIR` with exact `syn
 
 After a successful X deletion, or a `404` indicating the bookmark is already absent, the note is annotated with `bookmark_removed: true` and `bookmark_removed_at`, then moved to `KNOWLEDGE_BASE_DIR/archive`. Archived notes do not block future sync deduplication.
 
-If deletion returns `403`, re-run `uv run x-bookmarks-auth`; older tokens do not gain the new `bookmark.write` scope automatically.
+Deletion uses `twitter-cli` by default. Add `--official` to delete through the OAuth API instead, which has stricter, documented error semantics; if that returns `403`, re-run `uv run x-bookmarks-auth`, as older tokens do not gain the `bookmark.write` scope automatically.
 
 Live deletion is capped at 50 bookmarks per run. Use `--max N` to process fewer.
+
+## Link-Only Bookmarks
+
+A bookmark whose entire text is a shortlink carries no signal of its own.
+Categorizing it bare produced notes titled "Shared Link - No Substantive Content" holding nothing but the link.
+Two mechanisms now cover that case, and neither needs a flag.
+
+**X Articles.** When a tweet links to an X Article (`x.com/i/article/...`), the article's title travels with the bookmark and is passed to Claude alongside the tweet text.
+That is enough to produce a real title and an accurate pillar.
+The article `url` is also recorded in frontmatter as `article_url`, so the note links to the article itself rather than to an opaque `t.co` redirect.
+
+**External links.** When a link-only bookmark points somewhere other than X, the linked page is read through Jina Reader and its body is passed to Claude as an excerpt.
+This is scoped deliberately: a bookmark that says something in its own words is never fetched, so only bookmarks that would otherwise become empty notes disclose a URL.
+
+**Known limitation:** X Article *bodies* cannot be retrieved.
+`twitter-cli` does not return article text, and Jina Reader cannot read `x.com`.
+Notes for X Articles therefore carry accurate frontmatter and a working `article_url`, but their body shows only the original shortlink.
+
+## Enriching Link Titles
+
+External link titles are frequently missing (always, on the default path, which emits bare URLs), which makes notes less readable and gives Claude less signal during categorization. Opt in to backfill those titles:
+
+```bash
+uv run x-bookmarks --enrich-titles
+```
+
+Titles are fetched from [Jina Reader](https://r.jina.ai) with `GET https://r.jina.ai/{url}` — no API key, no account, no credential of any kind. Enrichment runs *after* deduplication, so only genuinely new bookmarks cost a request, and repeated URLs are fetched once per run. A failed or slow fetch leaves the title empty and never aborts the run.
+
+**Trade-off:** every enriched URL is disclosed to a third-party service. That is why *title* enrichment is opt-in rather than automatic. If your bookmarks include private or sensitive links, leave it off.
+
+Note that the article-body read described under [Link-Only Bookmarks](#link-only-bookmarks) uses the same service without a flag.
+It is limited to bookmarks that have no text of their own, on the reasoning that a run silently emitting empty notes is the worse outcome.
+A bookmark that says something in its own words never leaves the machine.
+
+## Retrieval Mechanism
+
+By default, fetching **and removal** go through `twitter-cli`, which calls X's private GraphQL API using your session cookies.
+
+> **This violates the X Developer Agreement and can get your account flagged or locked.** `twitter-cli` ships TLS fingerprint impersonation and request timing jitter documented as evading pattern detection, so its traffic is built to be indistinguishable from a browser. Running it on every sync is a recurring automated pattern against your real, named account. Read [`docs/feasibility-agent-reach.md`](docs/feasibility-agent-reach.md) for the full assessment.
+
+This was chosen deliberately: it removes the paid API entirely and lifts the official endpoint's ~300-per-run pagination ceiling.
+
+### What changes versus the official API
+
+| | Default (`twitter-cli`) | `--official` |
+|---|---|---|
+| Cost | Free | Paid tier required |
+| Fetch ceiling | Cursor-paginated, bounded only by `--max-bookmarks` | ~300 per run |
+| Credential | `auth_token` (≈ full account access) | OAuth, scoped to `bookmark.*`, revocable |
+| Sanctioned | No | Yes |
+| Link titles | Never populated (bare URLs) | Sometimes populated |
+| Delete semantics | Inferred from stderr | Documented 404 = already absent |
+
+### Delete semantics caveat
+
+The official `DELETE` documents 404 as "already absent", which makes re-running a removal safe. The private surface has no such contract, so absence is inferred from a narrow stderr allowlist. Anything not positively matched raises rather than reporting success, because reporting a failed delete as success would archive the note while the bookmark still exists on X.
+
+If that matters for a given cleanup, run removal with `--official`.
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--official` | Use the official X API (OAuth) for fetching and removal. Requires a developer app; incurs cost. |
+| `--max-bookmarks N` | Maximum bookmarks to request via `twitter-cli` (default 5000). Not valid with `--official`. |
+| `--enrich-titles` | Backfill missing external-link titles via Jina Reader. Works on either path. |
+
+Pair `--enrich-titles` with the default path: `twitter-cli` emits bare URL strings with no title metadata, so on this path *every* external link title starts empty.
+
+```bash
+uv run x-bookmarks --enrich-titles
+uv run x-bookmarks --max-bookmarks 5000 --enrich-titles   # deep backfill
+uv run x-bookmarks --official                             # sanctioned, paid
+```
 
 ## Development
 
@@ -166,6 +275,14 @@ uv run pytest --cov=src --cov-report=term-missing
 - [`docs/prds/prd-x-bookmark-removal.md`](docs/prds/prd-x-bookmark-removal.md)
 - [`AGENTS.md`](AGENTS.md)
 
+### Feasibility Studies
+
+Candidate-mechanism assessments backing roadmap item `#17` (zero-cost bookmark retrieval). Each records a verdict and the evidence behind it; none has been adopted.
+
+- [`docs/feasibility-graphql-vs-x-api.md`](docs/feasibility-graphql-vs-x-api.md) — cookie/GraphQL session replay vs. the official API
+- [`docs/feasibility-agent-reach.md`](docs/feasibility-agent-reach.md) — `Panniantong/Agent-Reach`
+- [`docs/feasibility-x-research-skill.md`](docs/feasibility-x-research-skill.md) — `rohunvora/x-research-skill`
+
 ## Security Notes
 
 - OAuth tokens and local configuration are stored in `.env`.
@@ -173,3 +290,5 @@ uv run pytest --cov=src --cov-report=term-missing
 - The repository does not currently encrypt local token storage.
 - `KNOWLEDGE_BASE_DIR` may contain a machine-specific path. Keep it in `.env` or `.envrc.local`, not in committed docs or code.
 - If `ANTHROPIC_API_KEY` is unset (or blank) after loading `.env`, the loader falls back to fetching it from the user's [`pass`](https://www.passwordstore.org/) store at `ai/anthropic/api-key`. This lets you keep the key out of `.env` entirely and still run the tool through a `direnv`/`pass` workflow. The fallback is silently skipped if `pass` is not installed.
+- **Agent session transcripts:** AI coding agents may log tool calls, including environment and HTTP headers, into session transcripts. If you run this tool inside an agent session, credentials can end up in those logs. Prefer exported environment variables over inline command arguments, and review your agent's log settings.
+- **`TWITTER_AUTH_TOKEN` is not a scoped token.** Unlike the OAuth tokens used on the default path, which are scoped to `bookmark.*` and individually revocable, the `auth_token` cookie is roughly full account access. Never commit it, never pass it as a command-line argument, and revoke it by logging out of all X sessions if you suspect exposure. The unofficial backfill passes it only through the child process environment, never argv.

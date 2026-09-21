@@ -129,9 +129,10 @@ def _build_frontmatter(
     username = tweet.author.username if tweet.author else "unknown"
     date_str = tweet.created_at.strftime("%Y-%m-%d")
     tweet_url = f"https://x.com/{username}/status/{tweet.id}"
-    article_url = (
-        tweet.article_url if (bookmark_type == "article" and tweet.article_url) else None
-    )
+    # Recorded whenever the tweet has one, not only when its text was
+    # retrievable: `twitter-cli` never returns article text, so for those
+    # bookmarks this URL is the only route back to the source.
+    article_url = tweet.article_url or None
 
     return build_faceted_frontmatter(
         title=title,

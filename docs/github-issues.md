@@ -564,3 +564,153 @@ This improves reliability for both manual and scheduled runs.
 ### Priority
 
 `high`
+
+## Issue: Zero-cost bookmark retrieval path
+
+### Summary
+
+Remove the paid X API tier from the critical path and lift the per-run fetch ceiling, without making the user's personal X account the credential of record. This issue is scoped to a **goal**, not a mechanism: candidate approaches are evaluated against cost, ToS posture, and credential blast radius before one is selected.
+
+### Why It Matters
+
+Bookmark reads on the official X API v2 effectively require a paid tier, and runs are bounded by an observed ceiling of roughly 300 bookmarks per invocation (the 2026-08-03 run fetched 199). Cost is recurring and the ceiling blocks any full backfill of an established bookmark history. Both constraints are structural — no amount of tuning inside the current mechanism removes them.
+
+### Scope
+
+- Define the acceptance bar before choosing a mechanism: no recurring API cost, no full-account credential, no unbounded maintenance tax
+- Evaluate candidate mechanisms against that bar and record findings in `docs/feasibility-*.md`
+- Keep OAuth 2.0 PKCE as the default and only documented path until a candidate clears the bar
+- If a candidate is adopted, gate it behind an explicit opt-in env flag; never silent, never default
+- Add any new credential names to the pre-commit secret-scan denylist
+
+### Acceptance Criteria
+
+- [ ] Acceptance bar is written down and each candidate is scored against it
+- [ ] A decision is recorded — adopt, reject, or defer — with the rationale
+- [ ] The OAuth path remains functional and default regardless of outcome
+- [ ] If adopted: the alternate path is opt-in, documented as to its risk posture, and covered by tests
+- [ ] If adopted: no credential is written to a tracked file, and secret-scan rules cover the new names
+
+### Notes
+
+Depends on `#14` — any non-OAuth mechanism introduces a second credential with a larger blast radius than the current scoped tokens, and plaintext `.env` storage is unacceptable for it.
+
+Partially subsumes `#1` and `#2`: a mechanism without the official pagination ceiling changes what `since_id` and `_MAX_BOOKMARKS` are for. Do not implement all three in parallel.
+
+Prior analysis in `docs/feasibility-graphql-vs-x-api.md` assessed cookie/GraphQL session replay and recommended **against** it as a primary path, on account-ban risk and credential blast radius. That recommendation stands until superseded. Further candidate assessments: `docs/feasibility-agent-reach.md`, `docs/feasibility-x-research-skill.md`.
+
+### Labels
+
+- `enhancement`
+- `reliability`
+- `needs-decision`
+
+### Priority
+
+`high`
+
+## Issue: Opt-in unofficial backfill via twitter-cli (hybrid)
+
+### Summary
+
+Add a read-only, double-gated backfill path that fetches bookmarks through `public-clis/twitter-cli` instead of the official X API, to recover bookmark history beyond the official endpoint's observed ~300-per-run ceiling. The official OAuth path remains the default for all routine syncs, and deletion remains on the official API permanently.
+
+### Why It Matters
+
+`#17` established that a free, fully capable mechanism exists but fails the account-risk bar. Rather than adopt it wholesale or reject it outright, this splits the problem by job:
+
+- The **fetch ceiling** is a one-time problem. A single manual backfill recovers the history that the official endpoint will not paginate to.
+- The **API cost** is recurring but small, since incremental syncs fetch few new items and stay comfortably inside the official tier.
+
+A single interactive backfill presents a far smaller detection surface than a recurring automated job, which is the traffic pattern anti-bot systems are built to identify. This captures most of the value of `#17` at a fraction of the exposure.
+
+### Scope
+
+- `src/unofficial_client.py`: adapt `twitter bookmarks --json` output into the existing `Tweet` model
+- Two independent gates: `X_BOOKMARKS_UNOFFICIAL=1` **and** explicitly supplied `TWITTER_AUTH_TOKEN` / `TWITTER_CT0`
+- `--backfill-unofficial` and `--backfill-max N` CLI flags; refuse to combine with `--remove-synthesized-bookmarks`
+- Credentials passed via child process environment only, never argv
+- Fail loudly on any error; never fall back to or from the official path silently
+
+### Acceptance Criteria
+
+- [x] Default runs are byte-for-byte unchanged; the path is unreachable without the flag
+- [x] Invocation is refused when either credential is absent, before any subprocess spawns
+- [x] `--backfill-unofficial` cannot be combined with `--remove-synthesized-bookmarks`
+- [x] Credentials never appear in argv
+- [x] Adapter maps metrics to official API key names, synthesizes unique media keys, and emits timezone-aware timestamps
+- [x] A malformed entry is skipped rather than aborting the whole backfill
+- [x] Missing `twitter-cli` reports the install command
+- [x] Tests cover both gates, the adapter, and every error path
+
+### Notes
+
+The credential requirement is a safety mechanism, not ergonomics: when `TWITTER_AUTH_TOKEN`/`TWITTER_CT0` are absent, upstream `twitter-cli` scans Chrome/Edge cookie jars to find them. Refusing to invoke it without both variables is what prevents that unconsented scan. This mirrors the "Cookie-Editor-only policy" documented in `docs/feasibility-agent-reach.md` §5.2.
+
+This path violates the X Developer Agreement and can get the account flagged. It is documented as such in `--help`, in the runtime banner, and in `README.md`. It is intended to be run once, manually, and then left off.
+
+Depends on `#14` for credential storage hardening if this ever becomes routine rather than one-time.
+
+### Labels
+
+- `enhancement`
+- `reliability`
+- `opt-in`
+
+### Priority
+
+`medium`
+
+## Issue: Replace the X developer platform with twitter-cli as the default
+
+### Summary
+
+Make `twitter-cli` the default mechanism for both fetching and removal, drop the X OAuth variables from the required configuration, and reduce the official API to an opt-in `--official` escape hatch. After this change the tool runs with no X developer account and no API cost.
+
+### Why It Matters
+
+`#18` (v1.6) captured only the fetch-ceiling half of `#17`, leaving recurring API cost in place because routine syncs still used the paid endpoint. The maintainer elected to take the remaining half, accepting the account risk documented in `docs/feasibility-agent-reach.md` in exchange for eliminating the bill and the developer-platform dependency entirely.
+
+This is a deliberate acceptance of a known trade, not an oversight. See `Accepted trade-offs` under v1.7 in `docs/roadmap.md`.
+
+### Scope
+
+- `twitter-cli` becomes the default for fetching and for removal
+- `--official` selects the OAuth path for both operations
+- `CLIENT_ID` / `ACCESS_TOKEN` / `REFRESH_TOKEN` / `USER_ID` removed from `config._REQUIRED`; only `ANTHROPIC_API_KEY` remains mandatory
+- `Config.has_official_credentials` gates `--official`, failing at startup rather than mid-run
+- `delete_bookmark_unofficial` via `twitter unbookmark`, injected through the existing `remove_candidates(delete_bookmark=...)` seam
+- `X_BOOKMARKS_UNOFFICIAL` consent flag removed; the credential requirement is retained
+- `--backfill-unofficial` / `--backfill-max` replaced by `--official` / `--max-bookmarks`
+
+### Acceptance Criteria
+
+- [x] A bare run uses `twitter-cli` and never touches the official API
+- [x] The tool loads and runs with zero OAuth variables configured
+- [x] `--official` fails at startup with actionable output when OAuth is unconfigured or partially configured
+- [x] Removal routes to `twitter-cli` by default and to OAuth under `--official`
+- [x] Credentials never appear in argv on either fetch or delete
+- [x] Missing cookies abort before any subprocess spawns, preventing the browser-jar scan
+- [x] A failed unofficial fetch exits rather than silently falling back to the paid path
+- [x] Delete failures that cannot be positively identified as "already absent" raise rather than reporting success
+- [x] The default path has end-to-end `main()` coverage, not only unit coverage
+
+### Notes
+
+**Consent flag removal.** `X_BOOKMARKS_UNOFFICIAL` was a consent gate on an opt-in path. Once the path became the default, gating it would mean the tool never runs. The credential requirement is retained and is the load-bearing safety mechanism: without `TWITTER_AUTH_TOKEN`/`TWITTER_CT0`, upstream `twitter-cli` scans Chrome/Edge cookie jars.
+
+**Delete semantics regression.** The official `DELETE` documents 404 as "already absent", making re-runs safe. The private surface has no equivalent contract, so absence is inferred from a narrow stderr allowlist and anything unmatched raises. A false success would archive the note while the bookmark still exists on X. Use `--official` for removal when that distinction matters.
+
+**Why `--official` was retained rather than deleted.** The chosen mechanism is documented as brittle against X front-end builds (queryId and feature-flag churn). Removing the only fallback for a mechanism known to break would be poor engineering, and the OAuth code is already written and tested.
+
+**`#14` is now more urgent, not less.** `auth_token` is roughly full-account access, a larger blast radius than the scoped OAuth tokens it replaces, and it is used on every run.
+
+### Labels
+
+- `enhancement`
+- `breaking-change`
+- `needs-decision`
+
+### Priority
+
+`high`

@@ -77,7 +77,7 @@ class TestMain:
 
         mock_write.return_value = _write_stats(2, filenames=["hello.md", "hello-2.md"])
 
-        main([])
+        main(["--official"])
 
         mock_fetch.assert_called_once_with(config)
         mock_categorize.assert_called_once_with(tweets, api_key="sk-test", override_file=None)
@@ -93,7 +93,7 @@ class TestMain:
     def test_config_error_exits(self, mock_config, capsys):
         mock_config.side_effect = ValueError("Missing: CLIENT_ID")
         with pytest.raises(SystemExit) as exc_info:
-            main([])
+            main(["--official"])
         assert exc_info.value.code == 1
         assert "Configuration error" in capsys.readouterr().out
 
@@ -103,7 +103,7 @@ class TestMain:
         mock_config.return_value = _make_config(tmp_path)
         mock_fetch.return_value = ()
 
-        main([])
+        main(["--official"])
 
         output = capsys.readouterr().out
         assert "No bookmarks found" in output
@@ -119,7 +119,7 @@ class TestMain:
         mock_config.return_value = config
         mock_fetch.return_value = ()
 
-        main([])
+        main(["--official"])
 
         output = capsys.readouterr().out
         assert "output directory does not exist" in output
@@ -133,7 +133,7 @@ class TestMain:
         mock_config.return_value = config
         mock_fetch.return_value = ()
 
-        main([])
+        main(["--official"])
 
         output = capsys.readouterr().out
         assert "output directory does not exist" not in output
@@ -162,7 +162,7 @@ class TestMain:
         mock_categorize.return_value = (categorized, {"input_tokens": 50, "output_tokens": 25})
         mock_write.return_value = _write_stats(2, filenames=["a.md", "b.md"])
 
-        main([])
+        main(["--official"])
 
         output = capsys.readouterr().out
         assert "1 of 2 new bookmark(s) link to articles (1 with content from API)" in output
@@ -186,7 +186,7 @@ class TestMain:
         mock_categorize.return_value = (categorized, {"input_tokens": 50, "output_tokens": 25})
         mock_write.return_value = _write_stats(2, filenames=["a.md", "b.md"])
 
-        main([])
+        main(["--official"])
 
         output = capsys.readouterr().out
         assert "Found" not in output
@@ -207,7 +207,7 @@ class TestMain:
         mock_fetch.return_value = tweets
         mock_existing.return_value = {"1", "2"}
 
-        main([])
+        main(["--official"])
 
         mock_categorize.assert_not_called()
         output = capsys.readouterr().out
@@ -235,7 +235,7 @@ class TestMain:
         mock_categorize.return_value = (categorized, {"input_tokens": 50, "output_tokens": 25})
         mock_write.return_value = _write_stats(1, filenames=["hello.md"])
 
-        main([])
+        main(["--official"])
 
         mock_categorize.assert_called_once_with((tweet_new,), api_key="sk-test", override_file=None)
         output = capsys.readouterr().out
@@ -262,7 +262,7 @@ class TestMain:
         mock_categorize.return_value = (categorized, {"input_tokens": 50, "output_tokens": 25})
         mock_write.return_value = _write_stats(2, filenames=["a.md", "b.md"])
 
-        main([])
+        main(["--official"])
 
         output = capsys.readouterr().out
         assert "Applied Practice: 1" in output
@@ -289,7 +289,7 @@ class TestMain:
         mock_delete.return_value = DeleteBookmarkResult(tweet_id="123")
         _write_note(tmp_path / "note.md", "123", "true")
 
-        main(["--remove-synthesized-bookmarks", "--confirm"])
+        main(["--official", "--remove-synthesized-bookmarks", "--confirm"])
 
         mock_delete.assert_called_once()
         assert not (tmp_path / "note.md").exists()
@@ -330,7 +330,7 @@ class TestMain:
         )
         mock_write.return_value = _write_stats(1, filenames=["hello.md"])
 
-        main([])
+        main(["--official"])
 
         mock_delete.assert_not_called()
         assert not (tmp_path / "archive").exists()
@@ -343,7 +343,7 @@ class TestRunHistory:
         mock_config.return_value = _make_config(tmp_path)
         mock_fetch.return_value = ()
 
-        main([])
+        main(["--official"])
 
         history_path = tmp_path / _HISTORY_FILENAME
         assert history_path.exists()
@@ -360,7 +360,7 @@ class TestRunHistory:
         mock_fetch.return_value = (_make_tweet("1"),)
         mock_existing.return_value = {"1"}
 
-        main([])
+        main(["--official"])
 
         history_path = tmp_path / _HISTORY_FILENAME
         record = json.loads(history_path.read_text().strip())
@@ -386,7 +386,7 @@ class TestRunHistory:
         mock_categorize.return_value = (categorized, {"input_tokens": 10, "output_tokens": 5})
         mock_write.return_value = _write_stats(1, filenames=["hello.md"])
 
-        main([])
+        main(["--official"])
 
         history_path = tmp_path / _HISTORY_FILENAME
         record = json.loads(history_path.read_text().strip())
@@ -418,8 +418,8 @@ class TestRunHistory:
         mock_categorize.return_value = (categorized, {"input_tokens": 10, "output_tokens": 5})
         mock_write.return_value = _write_stats(1, filenames=["a.md"])
 
-        main([])
-        main([])
+        main(["--official"])
+        main(["--official"])
 
         history_path = tmp_path / _HISTORY_FILENAME
         lines = history_path.read_text().strip().split("\n")

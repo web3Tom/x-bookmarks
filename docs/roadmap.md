@@ -10,7 +10,7 @@
 - [x] Obsidian Markdown generation with frontmatter
 - [x] Deduplication at write time by `tweet_id`
 - [x] Long-form tweet (`note_tweet`) support
-- [x] X Article detection and content extraction
+- [x] X Article detection and content extraction — **detection only in practice on the default path.** `twitter-cli` does not return `articleText` (0 of 200 in a live sample), so article *content* arrives solely via `--official`. See v1.8
 
 ### v1.1 — Efficiency & Configuration
 - [x] Early deduplication — filter already-saved bookmarks **before** Claude API call to avoid wasting credits
@@ -41,6 +41,63 @@
 - [x] **Lateral tagging in categorization** — Claude extracts tags alongside Category/Subcategory in both `categorizer.py` and `migrate.py`
 - [x] **Migration backward compatibility** — existing tags preserved in migrated files when Claude returns no new tags
 
+### v1.6 — Hybrid Free Retrieval
+
+> **Superseded by v1.7.** The gates and flags described below (`X_BOOKMARKS_UNOFFICIAL`, `--backfill-unofficial`, `--backfill-max`) no longer exist; `twitter-cli` became the default rather than an opt-in backfill. Retained for the decision trail. `#16` is unaffected and still current.
+
+- [x] **[#18] Opt-in unofficial backfill** — `src/unofficial_client.py` adapts `twitter bookmarks --json` into the existing `Tweet` model behind two independent gates (`X_BOOKMARKS_UNOFFICIAL=1` **and** explicit `TWITTER_AUTH_TOKEN`/`TWITTER_CT0`). Read-only, `--backfill-unofficial` / `--backfill-max`, refused in combination with `--remove-synthesized-bookmarks`, credentials passed via child env never argv, fails loudly with no silent fallback in either direction
+- [x] **[#16] External link title backfill** — implemented in `src/enrichment.py` via **Jina Reader** (`https://r.jina.ai/{url}`) rather than the originally-planned `defuddle`. Opt-in with `--enrich-titles`, applied after deduplication so only new bookmarks are enriched, results cached per URL, failures degrade to `title: None` without aborting the run
+
+#### Why Jina Reader instead of `defuddle` for `#16`
+
+`#16` was originally scoped around `defuddle`, which requires the binary on `PATH`. Jina Reader is a keyless unauthenticated `GET` with no local dependency, discovered while assessing Agent-Reach (see [`feasibility-agent-reach.md`](feasibility-agent-reach.md) §5.1). It removes the install precondition entirely and carries no credential.
+
+The trade-off, recorded rather than averaged away: Jina discloses every enriched URL to a third party, whereas `defuddle` fetches locally. That is why enrichment is opt-in rather than automatic. `#3` (full article body extraction) remains open and should reuse whichever mechanism `#16` settles on in practice.
+
+This pairing is not incidental. The unofficial path emits bare URL strings with no title metadata at all, so **every** `ExternalLink.title` starts as `None` there, versus only some on the official path. `#18` makes `#16` substantially more valuable.
+
+### v1.7 — Full Free Replacement
+- [x] **[#19] `twitter-cli` as the default mechanism** — reads **and** removals now go through `twitter-cli` by default. `--official` selects the OAuth path for both. The X developer platform is no longer required to run the tool at all
+- [x] **Optional OAuth configuration** — `CLIENT_ID`/`ACCESS_TOKEN`/`REFRESH_TOKEN`/`USER_ID` dropped from `config._REQUIRED`; only `ANTHROPIC_API_KEY` remains mandatory. `Config.has_official_credentials` gates `--official` and fails at startup rather than mid-run
+- [x] **Unofficial deletion** — `delete_bookmark_unofficial` via `twitter unbookmark`, injected through the existing `remove_candidates(delete_bookmark=...)` seam so eligibility, archiving, and the 50-per-run cap are untouched
+- [x] **Consent flag removed** — `X_BOOKMARKS_UNOFFICIAL` deleted. It was a consent gate on an opt-in path; gating the only default path would just mean the tool never runs. The **credential requirement stays**, because that is the mechanism preventing `twitter-cli` from scanning browser cookie jars
+
+#### Accepted trade-offs
+
+Recorded rather than glossed, since these are now the tool's normal operating conditions:
+
+| Property | Before | After |
+|---|---|---|
+| Cost | Paid tier | **Free** |
+| Fetch ceiling | ~300/run | Cursor-paginated |
+| Credential | OAuth, `bookmark.*` scoped, revocable | `auth_token`, ≈ full account access |
+| Sanctioned | Yes | **No** — violates the Developer Agreement |
+| Exposure | One-time backfill (v1.6 hybrid) | **Every sync, including deletes** |
+| Delete semantics | Documented 404 = already absent | Inferred from a narrow stderr allowlist |
+
+The delete-semantics regression is the sharpest edge. Anything not positively matched as "already absent" raises rather than reporting success, because a false success would archive the note while the bookmark still exists on X. Use `--official` for removal when that distinction matters.
+
+### v1.8 — Link-Only Bookmark Recovery
+
+- [x] **Article title reaches the categorizer** — `build_prompt_payload` now sends `article_title` alongside `text`. A link-only X Article bookmark carries no other signal, and without it Claude emitted notes titled "Shared Link - No Substantive Content"
+- [x] **[#3, partial] Article body for link-only bookmarks** — `backfill_articles` in `src/enrichment.py` harvests the `Markdown Content:` body from the same Jina response that already yielded the title. Automatic rather than flagged, but scoped to bookmarks with no substantive text of their own
+- [x] **`article_url` no longer gated on article text** — it was emitted only for `type: "article"`, which requires article content, which `twitter-cli` never supplies. Every X Article bookmarked on the default path silently lost its URL and kept only a `t.co` redirect
+- [x] **Categorization failures are survivable** — an unparseable Claude reply is retried once, then raises `CategorizationError` naming the stage. Previously a bare `json.JSONDecodeError` killed the run after the bookmarks had already been fetched
+- [x] **Enrichment fetchers late-bound** — `fetcher: Callable = fetch_page` bound the default at import time, silently defeating monkeypatching. A test in this work really did fetch `example.com` over the network before this was found
+
+#### Why the X Article half of `#3` is closed as infeasible
+
+Two independent blocks, both verified live rather than assumed:
+
+| Source | Result |
+|---|---|
+| `twitter-cli` `articleText` | Present in **0 of 200** bookmarks. The field is parsed by `unofficial_client.py` but never populated |
+| Jina Reader on `x.com/i/article/...` | `403 AbuseAlleviationError` — anonymous access to `x.com` is blocked outright |
+
+So an X Article's prose is unreachable on the free path. What *is* reachable is its title, which `twitter-cli` returns reliably and descriptively ("The rise of the knowledge engineer"), and its URL. Notes for X Articles therefore carry accurate frontmatter and a working `article_url`, with a body showing only the shortlink. Closing the gap would require an authenticated X Article fetch, which reuses the `auth_token` already accepted in v1.7 but is a separate piece of work.
+
+This also revises the v1.6 note that `#3` "should reuse whichever mechanism `#16` settles on". It does, for external links. For X Articles no mechanism exists at this privilege level.
+
 ## Planned
 
 Items are grouped into execution tiers in priority order. Each links to the corresponding GitHub issue in [`docs/github-issues.md`](github-issues.md). Priority reflects safety-first sequencing: credential hardening and dev-safety scaffolding precede content features.
@@ -56,10 +113,13 @@ Items are grouped into execution tiers in priority order. Each links to the corr
 - [ ] **[#2] Configurable bookmark cap** — expose `_MAX_BOOKMARKS` (currently hardcoded at 800) via CLI flag or env var
 
 ### Tier 3 — Content Quality
-- [ ] **[#3] Article extraction for external links** — fetch and clean article body via `defuddle` for non-X URLs
-- [ ] **[#16] External link title backfill** — after API fetch, run `defuddle` against any `ExternalLink.expanded_url` where `title is None` to populate missing titles; lighter than full article extraction and improves categorization quality and note readability
+- [~] **[#3] Article extraction for external links** — **partially done in v1.8** via Jina Reader, scoped to link-only bookmarks. Remaining: extraction for bookmarks that already have their own text, which is a quality improvement rather than an empty-note fix. The X Article half of this item is **closed as infeasible** — see v1.8
 - [ ] **[#4] Thread unrolling** — detect tweet threads and stitch related posts into a single coherent note
 - [ ] **[#5] Quote tweet expansion** — inline quoted tweet content into the parent note
+
+> `#16` moved to **Completed (v1.6)**, implemented via Jina Reader rather than `defuddle`. See the v1.6 section for the mechanism rationale and its trade-off.
+>
+> `#3` is partially complete as of **v1.8**: external link-only bookmarks are extracted; X Articles are closed as infeasible on the free path. See the v1.8 section.
 
 ### Tier 4 — UX & Automation
 - [ ] **[#11] Verbose and quiet CLI modes** — control output verbosity for debugging vs automation contexts
@@ -76,9 +136,35 @@ Items are grouped into execution tiers in priority order. Each links to the corr
 - `#1` and `#2` pair naturally (both touch fetch loop configuration)
 - `#10` and `#11` pair naturally (both CLI flag work)
 - `#4` and `#5` share tweet-parsing expansion logic
+- `#17` **requires `#14`** — any non-OAuth path introduces a second, higher-blast-radius credential; storing it in plaintext `.env` is unacceptable, so token hardening must land first
+- `#17` partially subsumes `#1` and `#2` — a mechanism without the official pagination ceiling changes what `since_id` and `_MAX_BOOKMARKS` are for; do not implement all three in parallel
 
 ### Priority Rationale
 - **Why `#14` first:** public-release audit flags plaintext token storage as the highest remaining risk.
 - **Why `#10` second:** tiny effort, but makes every later content feature safer to iterate on and demo.
 - **Why `#1` third:** today's run showed 58 of 99 fetched bookmarks were already on disk — `since_id` would avoid fetching them in the first place.
 - **Alternate ordering:** if use is single-user and local-only, promote `#3` (article extraction) above `#14` — bigger day-to-day quality win at the cost of leaving token handling untouched.
+- **Why `#17` sits in Tier 2, not Tier 1:** cost and the fetch ceiling are live, recurring constraints — the 2026-08-03 run fetched 199 bookmarks against an observed ~300/run ceiling — so it outranks content polish. It is deliberately *not* Tier 1 because the leading candidate mechanism (cookie/GraphQL session replay) inverts the roadmap's safety-first ordering: it would introduce full-account session cookies while `#14` still leaves tokens in plaintext. Sequencing `#14` before `#17` resolves that inversion rather than averaging it away.
+- **`#17` is goal-scoped, not means-scoped.** The roadmap commits to removing the paid tier from the critical path; it does **not** commit to cookie/GraphQL as the mechanism. `feasibility-graphql-vs-x-api.md` recommends against that mechanism as the primary path, and that recommendation stands until a candidate clears the cost / ToS / blast-radius bar.
+
+#### `#17` candidate log
+
+| Date | Candidate | Verdict | Reason |
+|------|-----------|---------|--------|
+| 2026-06-12 | Cookie/GraphQL via vendored `bird` | Rejected as primary | Account-ban risk; `auth_token` ≈ full-account blast radius. Opt-in fallback only, if ever |
+| 2026-08-03 | [`Panniantong/Agent-Reach`](feasibility-agent-reach.md) | Not the right unit | Contains no bookmark code itself; it is an installer/router. Assessment redirected to its X delegate, below |
+| 2026-08-03 | [`public-clis/twitter-cli`](feasibility-agent-reach.md) (Agent-Reach's delegate) | **Rejected on risk, not capability** | **Clears the capability bar outright** — free, Apache-2.0, Python, reads own bookmarks + folders + create/delete, cursor-paginated, dynamic queryIds. Declined because it ships an explicit anti-detection stack: TLS fingerprint impersonation, `x-client-transaction-id` forgery, timing jitter documented as evading pattern detection, and full browser-cookie forwarding |
+| 2026-08-03 | [`rohunvora/x-research-skill`](feasibility-x-research-skill.md) | Rejected | Wrapper over the **paid** official API (~$0.50/search) — wrong cost direction; bookmarks command was added and reverted 116s later, absent at `HEAD` |
+
+**Status: RESOLVED 2026-08-04 by `#19` (v1.7).**
+
+`#17` asked to remove the paid tier from the critical path without making the personal account the credential of record. It was resolved by accepting the second half of that trade rather than satisfying it: `twitter-cli` is now the default for reads and deletes, the X developer platform is gone, and `auth_token` **is** the credential of record.
+
+The decision was made explicitly by the maintainer with the risk documented (see `Accepted trade-offs` under v1.7). The candidate log below is retained as the evidence trail for *why* no lower-risk option was adopted: none existed. `--official` remains available as an escape hatch, since the chosen mechanism is known to be brittle against X front-end builds.
+
+`#17` was deliberately written goal-scoped so a safer third mechanism could be adopted if one existed. The 2026-08-03 sweep establishes that none does:
+
+- The **free** mechanisms are fully capable and all converge on the same cookie/GraphQL substrate, now with active anti-detection.
+- The **sanctioned** mechanisms cost money.
+
+A capable free mechanism therefore exists today and could be integrated in days. The blocker is not engineering and not discovery — it is whether driving the user's real, named X account through a tool engineered to evade platform detection is an acceptable trade for removing API cost. **That is a user decision, and until it is made `#17` should not be picked up.** If the answer is ever yes, `feasibility-agent-reach.md` §5.2 and §5.4 define the required shape: explicit paste-in credentials only, never a browser-jar scan, opt-in behind a flag, OAuth remaining default.

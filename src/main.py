@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 import uuid
@@ -15,8 +16,14 @@ from src.api_client import (
     delete_bookmark,
     fetch_bookmarks,
 )
-from src.categorizer import categorize_tweets
+from src.categorizer import CategorizationError, categorize_tweets
 from src.config import load_config
+from src.cookie_refresh import CookieRefreshError, refresh_cookies
+from src.enrichment import (
+    backfill_articles,
+    backfill_titles,
+    has_substantive_text,
+)
 from src.markdown_writer import read_existing_ids, write_bookmarks
 from src.removal import (
     backfill_synthesized_false,
@@ -24,8 +31,16 @@ from src.removal import (
     remove_candidates,
     scan_synthesized_bookmark_notes,
 )
+from src.unofficial_client import (
+    AUTH_TOKEN_ENV,
+    CT0_ENV,
+    UnofficialFetchError,
+    delete_bookmark_unofficial,
+    fetch_bookmarks_unofficial,
+)
 
 _HISTORY_FILENAME = ".x-bookmarks-history.jsonl"
+_DEFAULT_MAX_BOOKMARKS = 5000
 
 
 def _build_run_record(
@@ -106,11 +121,47 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         dest="max_removals",
         help=f"Maximum live removals to attempt, capped at {max_live_removals()}.",
     )
+    parser.add_argument(
+        "--official",
+        action="store_true",
+        help=(
+            "Use the official X API (OAuth) instead of twitter-cli. Requires a "
+            "configured X developer app and incurs API cost. Applies to both "
+            "fetching and removal."
+        ),
+    )
+    parser.add_argument(
+        "--max-bookmarks",
+        type=int,
+        help=(
+            "Maximum bookmarks to request when fetching via twitter-cli "
+            f"(default {_DEFAULT_MAX_BOOKMARKS}). Ignored with --official, "
+            "which uses the API's own pagination cap."
+        ),
+    )
+    parser.add_argument(
+        "--enrich-titles",
+        action="store_true",
+        help=(
+            "Backfill missing external-link titles via Jina Reader "
+            "(keyless, no credentials). Discloses bookmarked URLs to a "
+            "third-party service."
+        ),
+    )
     args = parser.parse_args(argv)
     if (args.dry_run or args.confirm or args.max_removals is not None) and not args.remove_synthesized_bookmarks:
         parser.error("--dry-run, --confirm, and --max require --remove-synthesized-bookmarks")
     if args.max_removals is not None and args.max_removals < 1:
         parser.error("--max must be greater than zero")
+    if args.enrich_titles and args.remove_synthesized_bookmarks:
+        parser.error(
+            "--enrich-titles cannot be combined with "
+            "--remove-synthesized-bookmarks; removal mode never fetches or categorizes"
+        )
+    if args.max_bookmarks is not None and args.official:
+        parser.error("--max-bookmarks does not apply to --official")
+    if args.max_bookmarks is not None and args.max_bookmarks < 1:
+        parser.error("--max-bookmarks must be greater than zero")
     return args
 
 
@@ -179,8 +230,11 @@ def _run_remove_synthesized_bookmarks(
     dry_run: bool,
     confirmed: bool,
     max_removals: int | None,
+    official: bool = False,
     input_func=None,
 ) -> int:
+    if official:
+        _require_official_credentials(config, run_id)
     output_dir = config.output_dir
     archive_dir = output_dir / "archive"
     print(f"[{run_id}] Output directory: {output_dir}")
@@ -261,9 +315,13 @@ def _run_remove_synthesized_bookmarks(
             output_dir=output_dir,
             dry_run=dry_run,
             max_removals=max_removals,
-            delete_bookmark=lambda tweet_id: delete_bookmark(config, tweet_id),
+            delete_bookmark=_build_deleter(config, official=official),
         )
-    except (BookmarkWriteScopeError, BookmarkDeleteRateLimitError) as exc:
+    except (
+        BookmarkWriteScopeError,
+        BookmarkDeleteRateLimitError,
+        UnofficialFetchError,
+    ) as exc:
         duration_ms = int((time.monotonic() - t_start) * 1000)
         message = str(exc)
         record = _build_removal_record(
@@ -326,7 +384,108 @@ def _run_remove_synthesized_bookmarks(
     return 1 if stats.failed else 0
 
 
-def _run_sync(config, run_id: str, started_at: str, t_start: float) -> None:
+def _build_deleter(config, *, official: bool):
+    """Return the delete callable for the selected mechanism.
+
+    `remove_candidates` takes deletion as an injected callable, so switching
+    mechanism does not touch the eligibility, archiving, or capping logic that
+    makes removal safe.
+    """
+    if official:
+        return lambda tweet_id: delete_bookmark(config, tweet_id)
+    return lambda tweet_id: delete_bookmark_unofficial(tweet_id, env=os.environ)
+
+
+def _require_official_credentials(config, run_id: str) -> None:
+    """Exit cleanly when --official is used without an X developer app.
+
+    OAuth credentials are optional since twitter-cli became the default, so
+    this is now a reachable user error rather than an impossible state.
+    """
+    if not config.has_official_credentials:
+        print(
+            f"[{run_id}] --official requires CLIENT_ID, ACCESS_TOKEN, "
+            "REFRESH_TOKEN and USER_ID.\n"
+            f"[{run_id}]   Run 'x-bookmarks-auth' to configure them, or drop "
+            "--official to use twitter-cli."
+        )
+        sys.exit(1)
+
+
+def _fetch_tweets(
+    config,
+    run_id: str,
+    *,
+    official: bool,
+    max_bookmarks: int | None,
+):
+    """Fetch bookmarks via twitter-cli by default, or the official API.
+
+    Neither path falls back to the other. A misconfigured run fails loudly
+    rather than silently switching mechanism, because the two have very
+    different cost and account-risk profiles and a silent switch would hide
+    which one actually ran.
+    """
+    if official:
+        _require_official_credentials(config, run_id)
+        print(f"[{run_id}] Fetching bookmarks for user {config.user_id} (official API)...")
+        return fetch_bookmarks(config)
+
+    limit = max_bookmarks or _DEFAULT_MAX_BOOKMARKS
+    print(f"[{run_id}] Fetching bookmarks via twitter-cli (max {limit})...")
+    try:
+        return fetch_bookmarks_unofficial(max_count=limit, env=os.environ)
+    except UnofficialFetchError as exc:
+        retried = _retry_with_refreshed_cookies(run_id, limit, exc)
+        if retried is not None:
+            return retried
+        print(f"[{run_id}] Fetch failed: {exc}")
+        sys.exit(1)
+
+
+def _retry_with_refreshed_cookies(run_id: str, limit: int, failure: Exception):
+    """Re-read the X session from Firefox and retry the fetch once.
+
+    Every fetch failure triggers a refresh attempt rather than only the ones that
+    look like auth errors: `twitter-cli` has no error contract to classify
+    against, and guessing from stderr text is what the delete path already had to
+    do. The retry is gated on the cookies having actually changed instead, which
+    is deterministic - identical cookies cannot produce a different result, so
+    nothing is retried pointlessly.
+
+    Returns None when no retry was warranted or the retry also failed, leaving
+    the caller to report the original failure.
+    """
+    before = (os.environ.get("TWITTER_AUTH_TOKEN"), os.environ.get("TWITTER_CT0"))
+    try:
+        refresh_cookies(os.environ)
+    except CookieRefreshError as refresh_failure:
+        print(f"[{run_id}] Cookie refresh unavailable: {refresh_failure}")
+        return None
+
+    if (os.environ.get("TWITTER_AUTH_TOKEN"), os.environ.get("TWITTER_CT0")) == before:
+        print(f"[{run_id}] Firefox holds the same session, so this is not a stale cookie.")
+        return None
+
+    print(f"[{run_id}] Session cookies were stale. Refreshed from Firefox, retrying...")
+    try:
+        return fetch_bookmarks_unofficial(max_count=limit, env=os.environ)
+    except UnofficialFetchError as retry_failure:
+        print(f"[{run_id}] Retry after refresh also failed: {retry_failure}")
+        print(f"[{run_id}] Original failure: {failure}")
+        return None
+
+
+def _run_sync(
+    config,
+    run_id: str,
+    started_at: str,
+    t_start: float,
+    *,
+    official: bool = False,
+    max_bookmarks: int | None = None,
+    enrich_titles: bool = False,
+) -> None:
     """Fetch bookmarks, categorize, and write to Obsidian vault."""
     print(f"[{run_id}] Output directory: {config.output_dir}")
     if not config.output_dir.exists():
@@ -337,8 +496,12 @@ def _run_sync(config, run_id: str, started_at: str, t_start: float) -> None:
             f"[{run_id}]   run, but if you expected existing notes here, KNOWLEDGE_BASE_DIR\n"
             f"[{run_id}]   is likely misconfigured (check .env and .envrc.local)."
         )
-    print(f"[{run_id}] Fetching bookmarks for user {config.user_id}...")
-    tweets = fetch_bookmarks(config)
+    tweets = _fetch_tweets(
+        config,
+        run_id,
+        official=official,
+        max_bookmarks=max_bookmarks,
+    )
 
     if not tweets:
         duration_ms = int((time.monotonic() - t_start) * 1000)
@@ -372,6 +535,40 @@ def _run_sync(config, run_id: str, started_at: str, t_start: float) -> None:
         print(f"[{run_id}] History written to {history_path}")
         return
 
+    if enrich_titles:
+        missing = sum(
+            1 for t in novel for link in t.external_links if not link.title
+        )
+        if missing:
+            print(
+                f"[{run_id}] Enriching {missing} external link title(s) "
+                "via Jina Reader..."
+            )
+            novel = backfill_titles(novel)
+            filled = sum(
+                1 for t in novel for link in t.external_links if link.title
+            )
+            print(f"[{run_id}] {filled} link title(s) now populated.")
+
+    link_only = tuple(
+        t for t in novel
+        if t.external_links and not t.article_content and not has_substantive_text(t)
+    )
+    if link_only:
+        print(
+            f"[{run_id}] {len(link_only)} link-only bookmark(s) carry no text of "
+            "their own; reading the linked pages via Jina Reader..."
+        )
+        link_only_ids = {t.id for t in link_only}
+        novel = backfill_articles(novel)
+        recovered = sum(
+            1 for t in novel if t.id in link_only_ids and t.article_content
+        )
+        print(
+            f"[{run_id}] {recovered} of {len(link_only)} link-only bookmark(s) "
+            "recovered article content."
+        )
+
     article_count = sum(1 for t in novel if t.article_url)
     if article_count:
         with_content = sum(1 for t in novel if t.article_content)
@@ -382,11 +579,24 @@ def _run_sync(config, run_id: str, started_at: str, t_start: float) -> None:
 
     print(f"[{run_id}] Categorizing {len(novel)} new bookmark(s) with Claude...")
 
-    categorized, usage = categorize_tweets(
-        novel,
-        api_key=config.anthropic_api_key,
-        override_file=config.taxonomy_file,
-    )
+    try:
+        categorized, usage = categorize_tweets(
+            novel,
+            api_key=config.anthropic_api_key,
+            override_file=config.taxonomy_file,
+        )
+    except CategorizationError as exc:
+        duration_ms = int((time.monotonic() - t_start) * 1000)
+        print(f"[{run_id}] {exc}")
+        record = _build_run_record(
+            run_id=run_id, status="error", started_at=started_at,
+            duration_ms=duration_ms, output_dir=str(config.output_dir),
+            fetched=len(tweets), skipped=skipped, novel=len(novel),
+            error=str(exc),
+        )
+        history_path = _append_history(config.output_dir, record)
+        print(f"[{run_id}] History appended to {history_path}")
+        sys.exit(1)
 
     print(f"[{run_id}] Writing to {config.output_dir}...")
     stats = write_bookmarks(categorized, config.output_dir)
@@ -449,12 +659,21 @@ def main(argv: Sequence[str] | None = None) -> None:
             dry_run=args.dry_run,
             confirmed=args.confirm,
             max_removals=args.max_removals,
+            official=args.official,
         )
         if code:
             sys.exit(code)
         return
 
-    _run_sync(config, run_id, started_at, t_start)
+    _run_sync(
+        config,
+        run_id,
+        started_at,
+        t_start,
+        official=args.official,
+        max_bookmarks=args.max_bookmarks,
+        enrich_titles=args.enrich_titles,
+    )
 
 
 if __name__ == "__main__":

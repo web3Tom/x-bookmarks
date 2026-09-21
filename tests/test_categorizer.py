@@ -4,7 +4,10 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from types import SimpleNamespace
+
 from src.categorizer import (
+    CategorizationError,
     build_prompt_payload,
     parse_categorization_response,
     categorize_tweets,
@@ -710,3 +713,103 @@ class TestCategorizeTweets:
         # Default pillars should be present
         for pillar_name in DEFAULT_PILLAR_NAMES:
             assert pillar_name in system_prompt
+
+
+class TestArticleTitleInPayload:
+    """An X Article's title is the only signal a link-only bookmark carries.
+
+    `twitter-cli` never returns `articleText` (0 of 200 in a live sample) and
+    Jina Reader cannot read x.com, so the article body is unobtainable. The
+    title, however, is always present and descriptive — "The rise of the
+    knowledge engineer" rather than a shortlink. Without it in the payload,
+    Claude sees a bare t.co URL and emits the placeholder
+    "Shared Link - No Substantive Content".
+    """
+
+    def _article_tweet(self, text="https://t.co/abc", title="The rise of the knowledge engineer"):
+        return Tweet(
+            id="1", text=text, author_id="10",
+            created_at=datetime(2025, 1, 1), author=None, public_metrics={},
+            media=(), external_links=(), note_tweet_text=None,
+            article_url="https://x.com/i/article/999",
+            article_title=title,
+        )
+
+    def test_article_title_is_sent(self):
+        payload = build_prompt_payload((self._article_tweet(),))
+        parsed = json.loads(payload)
+        assert parsed[0]["article_title"] == "The rise of the knowledge engineer"
+
+    def test_absent_when_no_article_title(self):
+        """Ordinary posts must not gain an empty field."""
+        payload = build_prompt_payload((_make_tweet("1", "Real prose here"),))
+        parsed = json.loads(payload)
+        assert "article_title" not in parsed[0]
+
+    def test_title_accompanies_text_and_excerpt(self):
+        """Title supplements the tweet text; it never replaces it."""
+        tweet = self._article_tweet(text="my thoughts below")
+        parsed = json.loads(build_prompt_payload((tweet,)))
+        assert parsed[0]["text"] == "my thoughts below"
+        assert parsed[0]["article_title"]
+
+
+class TestEmptyResponseHandling:
+    """A non-JSON reply must not abort a run with a raw JSONDecodeError.
+
+    Observed live: Claude returned an empty body, `json.loads("")` raised
+    "Expecting value: line 1 column 1 (char 0)", and the whole run died after
+    the bookmarks had been fetched and paid for — with no indication of what
+    had actually gone wrong.
+    """
+
+    def _tweet(self):
+        return _make_tweet("1", "Some text")
+
+    def _client(self, texts):
+        """A stub Anthropic client yielding `texts` on successive calls."""
+        calls = {"n": 0}
+
+        class _Msg:
+            def __init__(self, text):
+                self.content = [SimpleNamespace(text=text)]
+                self.usage = SimpleNamespace(input_tokens=1, output_tokens=1)
+
+        class _Messages:
+            def create(self, **kwargs):
+                text = texts[min(calls["n"], len(texts) - 1)]
+                calls["n"] += 1
+                return _Msg(text)
+
+        class _Client:
+            messages = _Messages()
+
+        return _Client(), calls
+
+    def test_retries_once_then_succeeds(self, monkeypatch):
+        good = '[{"tweet_id": "1", "pillar": "Applied Practice", "title": "Ok"}]'
+        client, calls = self._client(["", good])
+        monkeypatch.setattr("src.categorizer.anthropic.Anthropic", lambda api_key: client)
+
+        result, _ = categorize_tweets((self._tweet(),), api_key="k")
+
+        assert calls["n"] == 2, "an unparseable reply must be retried once"
+        assert result[0].title == "Ok"
+
+    def test_persistent_failure_raises_actionable_error(self, monkeypatch):
+        client, _ = self._client([""])
+        monkeypatch.setattr("src.categorizer.anthropic.Anthropic", lambda api_key: client)
+
+        with pytest.raises(CategorizationError) as exc:
+            categorize_tweets((self._tweet(),), api_key="k")
+
+        assert "1 bookmark" in str(exc.value)
+
+    def test_valid_response_is_not_retried(self, monkeypatch):
+        good = '[{"tweet_id": "1", "pillar": "Applied Practice", "title": "Ok"}]'
+        client, calls = self._client([good])
+        monkeypatch.setattr("src.categorizer.anthropic.Anthropic", lambda api_key: client)
+
+        categorize_tweets((self._tweet(),), api_key="k")
+
+        assert calls["n"] == 1

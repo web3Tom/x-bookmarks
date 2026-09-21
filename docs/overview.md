@@ -35,9 +35,10 @@ If neither variable is exported in the process environment, the CLI also reads s
 2. Load credentials and local config from `.env`.
 3. Fetch bookmarks from the X API.
 4. Skip bookmarks that already exist in the target directory.
-5. Ask Claude to generate a title plus `pillar`, `mechanics`, and optional `entity_tags`.
-6. Write one Markdown note per bookmark.
-7. Append structured run metadata to `.x-bookmarks-history.jsonl`.
+5. For link-only bookmarks, read the linked page so the categorizer has something to work with.
+6. Ask Claude to generate a title plus `pillar`, `mechanics`, and optional `entity_tags`.
+7. Write one Markdown note per bookmark.
+8. Append structured run metadata to `.x-bookmarks-history.jsonl`.
 
 Removal mode is separate from this flow. `uv run x-bookmarks --remove-synthesized-bookmarks` scans existing active notes, removes eligible X bookmarks, annotates successful removals, and archives the notes without fetching bookmarks or calling Claude.
 
@@ -72,6 +73,17 @@ Dedup runs after all fetching completes, not during pagination:
 3. If all fetched bookmarks are already saved, the run exits immediately with `noop` status.
 4. A second defensive dedup check runs during file writing.
 
+### Link Enrichment
+
+[`src/enrichment.py`](x-bookmarks/src/enrichment.py) fills in what the bookmark source leaves empty, reading `https://r.jina.ai/{url}` — an unauthenticated GET returning the page as Markdown with a `Title:` header and a `Markdown Content:` body. Two backfills share that one response:
+
+- `backfill_titles` populates `ExternalLink.title`. Opt-in via `--enrich-titles`, because it touches every external link.
+- `backfill_articles` populates `Tweet.article_content` for link-only bookmarks — a tweet whose whole text is a shortlink. Automatic, but scoped to tweets that have no substantive text of their own, no article text already, and an external link to follow. A bookmark with its own prose is never fetched.
+
+Both run after deduplication, so only genuinely new bookmarks cost a request, and repeated URLs are fetched once per run. Any fetch failure degrades to leaving the field empty; enrichment never aborts a run.
+
+Neither holds a credential nor touches an X endpoint, so this path carries none of the account risk in [`feasibility-agent-reach.md`](x-bookmarks/docs/feasibility-agent-reach.md). The cost is that each enriched URL is disclosed to a third party.
+
 ### Categorization
 
 [`src/categorizer.py`](x-bookmarks/src/categorizer.py) builds a prompt using the override taxonomy file or neutral defaults. The schema is faceted:
@@ -81,6 +93,10 @@ Dedup runs after all fetching completes, not during pagination:
 - **Entity tags**: Optional nested dict tagging specific tools, frameworks, models. Entity tags come from the override file if present, else empty. Closed prefixes (framework, harness, model, tool), open entity vocabulary.
 
 Claude's categorization is guided by optional domain-specific guidance appended from the override file body.
+
+Each tweet is sent as `text` plus `author`, with `article_title` and `article_excerpt` added when available. `article_title` matters disproportionately: for a link-only X Article bookmark it is the only signal present, and without it Claude sees a bare shortlink and falls back to a placeholder title.
+
+An unparseable reply is retried once, then raises `CategorizationError`. This is deliberately not a bare `JSONDecodeError`: by that point the bookmarks have been fetched, so the failure must name the stage it came from rather than look like a fetch bug.
 
 ### Markdown Output
 
@@ -105,6 +121,8 @@ tweet_url: "https://x.com/handle/status/123456789"
 ```
 
 Notes may omit `mechanics` and `entity_tags` if empty (not present in YAML if the lists/dicts are empty). Posts use blockquoted tweet text. Articles write article content directly. Both include `## References`.
+
+`article_url` is emitted whenever the tweet carries one, independently of `type`. It is deliberately not gated on article text being present: `twitter-cli` never returns article text, so gating the two together dropped the URL for every X Article and left the note pointing at an opaque `t.co` redirect.
 
 ### Synthesized Bookmark Removal
 
@@ -138,6 +156,7 @@ Archived notes are intentionally excluded from active deduplication because `rea
 - Uses a single Claude request per run today; large runs are a roadmap item for chunking.
 - The X API has a known pagination bug that caps retrieval at approximately 300 bookmarks (~3 pages) even when the user has more. Run the tool regularly to keep new bookmarks within the retrievable window.
 - There is no early-stop optimization during fetching; all pages are fetched before dedup runs.
+- X Article bodies cannot be retrieved. `twitter-cli` does not return article text (observed: 0 of 200 bookmarks in a live sample carried `articleText`), and Jina Reader refuses `x.com`. Notes for X Articles get accurate frontmatter and a working `article_url`, but their body shows only the original shortlink.
 
 ## Testing
 
